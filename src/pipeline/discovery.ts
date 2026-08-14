@@ -28,10 +28,14 @@ export type Candidate = {
   id: string;
 } & z.infer<typeof candidateSchema>;
 
+const DISCOVERY_BATCH_SIZE = 25;
+
 /**
- * Discovery phase: reviews the changed files (sequentially in this MVP — the
+ * Discovery phase: reviews the inventory (sequentially in this MVP — the
  * reference methodology explicitly defines sequential review as the valid
- * degraded mode) and records plausible candidates with evidence.
+ * degraded mode). Diff inventories are small enough for one pass;
+ * repository inventories are split into batches so a single agent context
+ * stays bounded.
  */
 export async function runDiscovery(options: {
   runtime: AgentRuntime;
@@ -42,27 +46,41 @@ export async function runDiscovery(options: {
   diffSummary: string;
   maxTurns?: number;
   signal?: AbortSignal;
+  onBatchProgress?: (batch: number, batches: number) => void;
 }): Promise<Candidate[]> {
-  if (options.inventory.files.length === 0) return [];
-  const result = await options.runtime.run({
-    prompt: discoveryPrompt({
-      files: options.inventory.files,
-      threatModel: options.threatModel,
-      securityMd: options.securityMd,
-      diffSummary: options.diffSummary,
-    }),
-    cwd: options.repository,
-    ...(options.maxTurns === undefined ? {} : { maxTurns: options.maxTurns }),
-    ...(options.signal === undefined ? {} : { signal: options.signal }),
-  });
-  const parsed = discoveryResultSchema.parse(extractJsonObject(result.text));
-  const seen = new Set<string>();
+  const files = options.inventory.files;
+  if (files.length === 0) return [];
+  const batches: (typeof files)[] = [];
+  for (let index = 0; index < files.length; index += DISCOVERY_BATCH_SIZE) {
+    batches.push(files.slice(index, index + DISCOVERY_BATCH_SIZE));
+  }
   const candidates: Candidate[] = [];
-  for (const [index, candidate] of parsed.candidates.entries()) {
-    const id = `cand_${String(index + 1).padStart(4, "0")}`;
-    if (seen.has(id)) continue;
-    seen.add(id);
-    candidates.push({ id, ...candidate });
+  const seen = new Set<string>();
+  for (const [batchIndex, batch] of batches.entries()) {
+    options.onBatchProgress?.(batchIndex + 1, batches.length);
+    const result = await options.runtime.run({
+      prompt: discoveryPrompt({
+        files: batch,
+        threatModel: options.threatModel,
+        securityMd: options.securityMd,
+        diffSummary: options.diffSummary,
+        origin: options.inventory.origin,
+      }),
+      cwd: options.repository,
+      ...(options.maxTurns === undefined
+        ? {}
+        : { maxTurns: options.maxTurns }),
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    });
+    const parsed = discoveryResultSchema.parse(extractJsonObject(result.text));
+    for (const candidate of parsed.candidates) {
+      if (seen.has(candidate.title + candidate.path)) continue;
+      seen.add(candidate.title + candidate.path);
+      candidates.push({
+        id: `cand_${String(candidates.length + 1).padStart(4, "0")}`,
+        ...candidate,
+      });
+    }
   }
   return candidates;
 }

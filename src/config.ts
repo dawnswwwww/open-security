@@ -61,7 +61,19 @@ export const scanOptionsSchema = z.object({
   outputDir: z.string().min(1).optional(),
 });
 
+export const repositoryScanOptionsSchema = z.object({
+  /** Git ref to scan. Defaults to HEAD. */
+  head: z.string().min(1).optional(),
+  /** Cap on deep-reviewed files after ranking (default: 150). */
+  maxFiles: z.number().int().positive().optional(),
+  failOnSeverity: z
+    .enum(["critical", "high", "medium", "low", "informational"])
+    .optional(),
+  outputDir: z.string().min(1).optional(),
+});
+
 export type ScanOptions = z.infer<typeof scanOptionsSchema>;
+export type RepositoryScanOptions = z.infer<typeof repositoryScanOptionsSchema>;
 export type RuntimeConfig = z.infer<typeof runtimeConfigSchema>;
 
 export interface OpenSecurityConfig {

@@ -22,9 +22,12 @@ function progressLine(event: ScanProgressEvent): string {
         ? `[${elapsed}] threat model: loaded from cache`
         : `[${elapsed}] threat model: ${event.status}${event.status === "running" ? " (large repositories can take several minutes)" : ""}`;
     case "discovery":
-      return event.status === "running"
-        ? `[${elapsed}] discovery: reviewing ${event.files} changed file(s)`
-        : `[${elapsed}] discovery: ${event.candidates} candidate(s) found`;
+      if (event.status === "done") {
+        return `[${elapsed}] discovery: ${event.candidates} candidate(s) found`;
+      }
+      return event.batch === undefined
+        ? `[${elapsed}] discovery: reviewing ${event.files} file(s)`
+        : `[${elapsed}] discovery: batch ${event.batch}/${event.batches} (25 files per batch)`;
     case "validation":
       return event.status === "running"
         ? `[${elapsed}] validation: candidate ${event.completed}/${event.total} (each candidate gets an independent session)`
@@ -117,8 +120,16 @@ addRuntimeOptions(
     .command("scan")
     .description("Scan a Git diff for security vulnerabilities")
     .argument("[repository]", "repository path", ".")
-    .requiredOption("--base <ref>", "Git ref the diff starts from")
-    .option("--head <ref>", "Git ref the diff ends at (default: HEAD)")
+    .option(
+      "--base <ref>",
+      "Git ref the diff starts from; omit for a repository-wide scan",
+    )
+    .option("--head <ref>", "Git ref to scan (default: HEAD)")
+    .option(
+      "--max-files <n>",
+      "Repository scans: cap on deep-reviewed files after ranking (default: 150)",
+      Number,
+    )
     .option("--working-tree", "Scan staged + unstaged changes against --base")
     .option("--fail-on-severity <level>", "Exit 1 for findings at or above LEVEL")
     .option("--output-dir <dir>", "Output directory for scan artifacts")
@@ -127,23 +138,51 @@ addRuntimeOptions(
   const scanner = new OpenSecurity({
     runtime: runtimeConfigFrom(options as RuntimeOptions),
   });
-  const result = await scanner.scanDiff(
-    repository,
-    {
-      base: String(options["base"]),
-      head: options["head"] === undefined ? "HEAD" : String(options["head"]),
-      workingTree: options["workingTree"] === true,
-      ...(options["failOnSeverity"] === undefined
-        ? {}
-        : {
-            failOnSeverity: String(options["failOnSeverity"]) as SeverityLevel,
-          }),
-      ...(options["outputDir"] === undefined
-        ? {}
-        : { outputDir: String(options["outputDir"]) }),
-    },
-    (event) => process.stderr.write(`${progressLine(event)}\n`),
-  );
+  const onProgress = (event: ScanProgressEvent): void => {
+    process.stderr.write(`${progressLine(event)}\n`);
+  };
+  const failOnSeverity =
+    options["failOnSeverity"] === undefined
+      ? {}
+      : {
+          failOnSeverity: String(options["failOnSeverity"]) as SeverityLevel,
+        };
+  const outputDir =
+    options["outputDir"] === undefined
+      ? {}
+      : { outputDir: String(options["outputDir"]) };
+  if (options["base"] === undefined && options["workingTree"] === true) {
+    throw new Error(
+      "--working-tree requires --base; omit both for a repository scan.",
+    );
+  }
+  const result =
+    options["base"] === undefined
+      ? await scanner.scanRepository(
+            repository,
+            {
+              ...(options["head"] === undefined
+                ? {}
+                : { head: String(options["head"]) }),
+              ...(options["maxFiles"] === undefined
+                ? {}
+                : { maxFiles: Number(options["maxFiles"]) }),
+              ...failOnSeverity,
+              ...outputDir,
+            },
+            onProgress,
+          )
+      : await scanner.scanDiff(
+          repository,
+          {
+            base: String(options["base"]),
+            head: options["head"] === undefined ? "HEAD" : String(options["head"]),
+            workingTree: options["workingTree"] === true,
+            ...failOnSeverity,
+            ...outputDir,
+          },
+          onProgress,
+        );
   if (options["json"] === true) {
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   } else {

@@ -128,16 +128,19 @@ const TEXT_CODE_EXTENSIONS: ReadonlySet<string> = new Set([
 
 export interface InventoryFile {
   path: string;
-  status: GitChangedFile["status"];
+  status?: GitChangedFile["status"];
   previousPath?: string;
   /** Changed line ranges in the head revision, when available. */
   hunks: DiffHunk[];
 }
 
 export interface ScanInventory {
+  origin: "diff" | "repository";
   files: InventoryFile[];
   /** Changed paths dropped by the exclusion rules, for honest coverage. */
   excluded: string[];
+  /** Repository scans ranked below the review cap; reported as deferred. */
+  deferredNotReviewed?: string[];
 }
 
 export function isReviewablePath(path: string): boolean {
@@ -178,5 +181,75 @@ export function buildInventory(
   // across machines and locales.
   files.sort((left, right) => (left.path < right.path ? -1 : left.path > right.path ? 1 : 0));
   excluded.sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
-  return { files, excluded };
+  return { origin: "diff", files, excluded };
+}
+
+/**
+ * Security-relevance ranking for repository-wide scans, adapted from the
+ * reference methodology's rule that repository scans rank files before deep
+ * review (diff scans do not). Local path heuristics only — no model calls.
+ */
+const HIGH_RELEVANCE_SEGMENTS: ReadonlyArray<readonly [RegExp, number]> = [
+  [/auth|login|session|oauth|oidc|saml|token|credential|secret|jwt|passwd|password/iu, 6],
+  [/crypto|cipher|encrypt|decrypt|sign|cert|key|hash|tls|ssl/iu, 5],
+  [/sql|query|database|migration|dao|repo/iu, 3],
+  [/servlet|controller|endpoint|route|handler|api|rest|grpc|web|http/iu, 3],
+  [/upload|download|file|archive|extract|import|export|parse|deserializ|serializ|template|render/iu, 3],
+  [/filter|interceptor|middleware|permission|role|tenant|admin|user/iu, 2],
+  [/exec|runtime|process|shell|command|script|eval/iu, 2],
+];
+
+/** Ranks reviewable files by path security relevance, descending. */
+export function rankRepositoryFiles(
+  files: readonly InventoryFile[],
+): InventoryFile[] {
+  const scored = files.map((file) => {
+    let score = 0;
+    for (const [pattern, weight] of HIGH_RELEVANCE_SEGMENTS) {
+      if (pattern.test(file.path)) score += weight;
+    }
+    return { file, score };
+  });
+  scored.sort((left, right) => {
+    if (left.score !== right.score) return right.score - left.score;
+    return left.file.path < right.file.path
+      ? -1
+      : left.file.path > right.file.path
+        ? 1
+        : 0;
+  });
+  return scored.map((entry) => entry.file);
+}
+
+/**
+ * Builds the repository-wide inventory from tracked files, ranked by
+ * security relevance and capped at maxFiles for deep review. Files beyond
+ * the cap are NOT silently dropped — they are returned as deferred so
+ * coverage can report them honestly.
+ */
+export function buildRepositoryInventory(
+  trackedFiles: readonly string[],
+  maxFiles: number,
+): ScanInventory {
+  const reviewable: InventoryFile[] = [];
+  const excluded: string[] = [];
+  for (const path of trackedFiles) {
+    if (isReviewablePath(path)) {
+      reviewable.push({ path, hunks: [] });
+    } else {
+      excluded.push(path);
+    }
+  }
+  const ranked = rankRepositoryFiles(reviewable);
+  const files = ranked.slice(0, maxFiles);
+  const deferred = ranked.slice(maxFiles);
+  excluded.sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
+  return {
+    origin: "repository",
+    files,
+    excluded,
+    ...(deferred.length === 0
+      ? {}
+      : { deferredNotReviewed: deferred.map((file) => file.path) }),
+  };
 }

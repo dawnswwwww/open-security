@@ -3,6 +3,7 @@ import { join } from "node:path";
 import {
   meetsFailThreshold,
   type OpenSecurityConfig,
+  type RepositoryScanOptions,
   type RuntimeConfig,
   type ScanOptions,
   type SeverityLevel,
@@ -14,12 +15,18 @@ import {
   diffHunks,
   diffTargetId,
   listChangedFiles,
+  listRepositoryFiles,
   remoteUrl,
+  repositoryTargetId,
   resolveGitRoot,
   resolveRevision,
   type DiffSpec,
 } from "./git.js";
-import { buildInventory } from "./pipeline/inventory.js";
+import {
+  buildInventory,
+  buildRepositoryInventory,
+  type ScanInventory,
+} from "./pipeline/inventory.js";
 import {
   loadThreatModel,
   threatModelCacheKey,
@@ -90,7 +97,6 @@ export class OpenSecurity {
       head: options.head,
       workingTree: options.workingTree,
     };
-    const startedAt = new Date();
     const baseSha = await resolveRevision(repository, options.base);
     const headSha = options.workingTree
       ? undefined
@@ -100,24 +106,102 @@ export class OpenSecurity {
       options.outputDir === undefined
         ? join(repository, "..", ".open-security", scanId)
         : options.outputDir;
-    await mkdir(outputDir, { recursive: true });
-
-    // ① inventory
     const changed = await listChangedFiles(repository, spec);
     const hunks = await diffHunks(repository, spec);
     const inventory = buildInventory(changed, hunks);
+    const targetId = diffTargetId(spec.workingTree, baseSha, headSha);
+    return await this.#executeScan({
+      repository,
+      scanId,
+      outputDir,
+      inventory,
+      targetId,
+      origin: "diff",
+      baseSha,
+      ...(headSha === undefined ? {} : { headSha }),
+      workingTree: spec.workingTree,
+      ...(options.failOnSeverity === undefined
+        ? {}
+        : { failOnSeverity: options.failOnSeverity }),
+      diffSummary: `base=${spec.base} head=${
+        spec.workingTree ? "working-tree" : spec.head
+      }, ${changed.length} changed file(s), ${inventory.files.length} in review scope.`,
+      ...(onProgress === undefined ? {} : { onProgress }),
+    });
+  }
+
+  public async scanRepository(
+    repositoryInput: string,
+    options: RepositoryScanOptions,
+    onProgress?: ScanProgressCallback,
+  ): Promise<ScanResult> {
+    const repository = await resolveGitRoot(repositoryInput);
+    const headSha = await resolveRevision(repository, options.head ?? "HEAD");
+    const scanId = newScanId();
+    const outputDir =
+      options.outputDir === undefined
+        ? join(repository, "..", ".open-security", scanId)
+        : options.outputDir;
+    const tracked = await listRepositoryFiles(repository);
+    const inventory = buildRepositoryInventory(
+      tracked,
+      options.maxFiles ?? 150,
+    );
+    const targetId = repositoryTargetId(headSha);
+    return await this.#executeScan({
+      repository,
+      scanId,
+      outputDir,
+      inventory,
+      targetId,
+      origin: "repository",
+      headSha,
+      workingTree: false,
+      ...(options.failOnSeverity === undefined
+        ? {}
+        : { failOnSeverity: options.failOnSeverity }),
+      diffSummary:
+        `repository-wide scan at ${headSha.slice(0, 12)}: ` +
+        `${inventory.files.length} file(s) selected for deep review` +
+        (inventory.deferredNotReviewed === undefined
+          ? ""
+          : `, ${inventory.deferredNotReviewed.length} ranked out (deferred)`),
+      ...(onProgress === undefined ? {} : { onProgress }),
+    });
+  }
+
+  async #executeScan(input: {
+    repository: string;
+    scanId: string;
+    outputDir: string;
+    inventory: ScanInventory;
+    targetId: string;
+    origin: "diff" | "repository";
+    baseSha?: string;
+    headSha?: string;
+    workingTree: boolean;
+    failOnSeverity?: SeverityLevel;
+    diffSummary: string;
+    onProgress?: ScanProgressCallback;
+  }): Promise<ScanResult> {
+    const { onProgress } = input;
+    const startedAt = new Date();
+    await mkdir(input.outputDir, { recursive: true });
+
+    // ① inventory
     onProgress?.({
       phase: "inventory",
-      filesInScope: inventory.files.length,
-      excluded: inventory.excluded.length,
+      filesInScope: input.inventory.files.length,
+      excluded: input.inventory.excluded.length,
     });
 
     // ② threat model (cached per repository + head revision)
+    const cacheRevision = input.headSha ?? `worktree-${input.baseSha ?? "none"}`;
     const threatModel = await loadThreatModel({
       runtime: this.#runtime,
-      repository,
-      cacheKey: threatModelCacheKey(repository, headSha ?? `worktree-${baseSha}`),
-      outputDir,
+      repository: input.repository,
+      cacheKey: threatModelCacheKey(input.repository, cacheRevision),
+      outputDir: input.outputDir,
       ...(this.#config.runtime.maxTurnsPerPhase === undefined
         ? {}
         : { maxTurns: this.#config.runtime.maxTurnsPerPhase }),
@@ -127,30 +211,31 @@ export class OpenSecurity {
       onCacheStatus: (status) => onProgress?.({ phase: "threat-model", status }),
     });
     onProgress?.({ phase: "threat-model", status: "done" });
-    const securityMd = await resolveSecurityMd(repository);
+    const securityMd = await resolveSecurityMd(input.repository);
     const threatModelText = JSON.stringify(threatModel, null, 2);
 
-    // ③ discovery
-    onProgress?.({
-      phase: "discovery",
-      status: "running",
-      files: inventory.files.length,
-    });
+    // ③ discovery (batched; the first batch event reports the running state)
     const candidates = await runDiscovery({
       runtime: this.#runtime,
-      repository,
-      inventory,
+      repository: input.repository,
+      inventory: input.inventory,
       threatModel: threatModelText,
       securityMd,
-      diffSummary: `base=${spec.base} head=${
-        spec.workingTree ? "working-tree" : spec.head
-      }, ${changed.length} changed file(s), ${inventory.files.length} in review scope.`,
+      diffSummary: input.diffSummary,
       ...(this.#config.runtime.maxTurnsPerPhase === undefined
         ? {}
         : { maxTurns: this.#config.runtime.maxTurnsPerPhase }),
       ...(this.#config.signal === undefined
         ? {}
         : { signal: this.#config.signal }),
+      onBatchProgress: (batch, batches) =>
+        onProgress?.({
+          phase: "discovery",
+          status: "running",
+          files: input.inventory.files.length,
+          batch,
+          batches,
+        }),
     });
     onProgress?.({
       phase: "discovery",
@@ -169,7 +254,7 @@ export class OpenSecurity {
     }
     const validated = await runValidation({
       runtime: this.#runtime,
-      repository,
+      repository: input.repository,
       candidates,
       threatModel: threatModelText,
       securityMd,
@@ -185,19 +270,19 @@ export class OpenSecurity {
     onProgress?.({ phase: "validation", status: "done" });
 
     // ⑤⑥ severity + assemble
-    const targetId = diffTargetId(spec.workingTree, baseSha, headSha);
-    const remote = await remoteUrl(repository);
+    const remote = await remoteUrl(input.repository);
     const assembled = assemble({
-      scanId,
+      scanId: input.scanId,
       startedAt,
       completedAt: new Date(),
-      targetId,
-      displayName: repository,
+      targetId: input.targetId,
+      displayName: input.repository,
       ...(remote === undefined ? {} : { remote }),
-      baseRevision: baseSha,
-      ...(headSha === undefined ? {} : { headRevision: headSha }),
-      workingTree: spec.workingTree,
-      inventory,
+      ...(input.baseSha === undefined ? {} : { baseRevision: input.baseSha }),
+      ...(input.headSha === undefined ? {} : { headRevision: input.headSha }),
+      workingTree: input.workingTree,
+      origin: input.origin,
+      inventory: input.inventory,
       threatModel,
       validated,
       producer: { name: "open-security", version: VERSION },
@@ -208,6 +293,7 @@ export class OpenSecurity {
       deferred: assembled.coverage.deferred.length,
     });
 
+    const outputDir = input.outputDir;
     const findingsPath = join(outputDir, "findings.json");
     const manifestPath = join(outputDir, "scan-manifest.json");
     const coveragePath = join(outputDir, "coverage.json");
@@ -232,12 +318,18 @@ export class OpenSecurity {
       renderReport({
         findings: assembled.findings.findings,
         completeness: assembled.coverage.completeness,
-        includePaths: inventory.files.map((file) => file.path),
-        excludedPaths: inventory.excluded,
+        includePaths: input.inventory.files.map((file) => file.path),
+        excludedPaths: input.inventory.excluded,
+        ...(input.inventory.deferredNotReviewed === undefined
+          ? {}
+          : { deferredNotReviewed: input.inventory.deferredNotReviewed }),
         threatModelSummary: threatModel.summary,
-        baseRevision: baseSha,
-        ...(headSha === undefined ? {} : { headRevision: headSha }),
-        workingTree: spec.workingTree,
+        origin: input.origin,
+        ...(input.baseSha === undefined
+          ? {}
+          : { baseRevision: input.baseSha }),
+        ...(input.headSha === undefined ? {} : { headRevision: input.headSha }),
+        workingTree: input.workingTree,
       }),
       "utf8",
     );
@@ -247,7 +339,7 @@ export class OpenSecurity {
       await writeFile(
         sarifPath,
         `${JSON.stringify(
-          toSarif(assembled.findings, VERSION, `file://${repository}`),
+          toSarif(assembled.findings, VERSION, `file://${input.repository}`),
           null,
           2,
         )}\n`,
@@ -264,12 +356,12 @@ export class OpenSecurity {
       null,
     );
     const failedThreshold =
-      options.failOnSeverity !== undefined &&
+      input.failOnSeverity !== undefined &&
       reported.some((finding) =>
-        meetsFailThreshold(finding.severity.level, options.failOnSeverity!),
+        meetsFailThreshold(finding.severity.level, input.failOnSeverity!),
       );
     const result: ScanResult = {
-      scanId,
+      scanId: input.scanId,
       outputDir,
       findingsPath,
       manifestPath,
@@ -296,32 +388,61 @@ function createRuntime(config: RuntimeConfig): AgentRuntime {
   return new AcpRuntime({ acpCommand: config.acpCommand });
 }
 
+const REPORT_LIST_CAP = 50;
+
 function renderReport(input: {
   findings: assembledFindingView[];
   completeness: string;
   includePaths: readonly string[];
   excludedPaths: readonly string[];
+  deferredNotReviewed?: readonly string[];
   threatModelSummary: string;
-  baseRevision: string;
+  origin: "diff" | "repository";
+  baseRevision?: string;
   headRevision?: string;
   workingTree: boolean;
 }): string {
   const { findings, completeness } = input;
-  const range = input.workingTree
-    ? `${input.baseRevision.slice(0, 12)}…working-tree`
-    : `${input.baseRevision.slice(0, 12)}…${(input.headRevision ?? "").slice(0, 12)}`;
+  const range =
+    input.origin === "repository"
+      ? `revision ${(input.headRevision ?? "").slice(0, 12)}`
+      : input.workingTree
+        ? `${(input.baseRevision ?? "").slice(0, 12)}…working-tree`
+        : `${(input.baseRevision ?? "").slice(0, 12)}…${(input.headRevision ?? "").slice(0, 12)}`;
+  const reviewed =
+    input.includePaths.length > REPORT_LIST_CAP
+      ? [
+          ...input.includePaths.slice(0, REPORT_LIST_CAP).map((path) => `- reviewed: ${path}`),
+          `- … and ${input.includePaths.length - REPORT_LIST_CAP} more reviewed file(s)`,
+        ]
+      : input.includePaths.map((path) => `- reviewed: ${path}`);
+  const excluded =
+    input.excludedPaths.length > REPORT_LIST_CAP
+      ? [
+          `- excluded (inventory rules): ${input.excludedPaths.length} file(s) (docs, tests, vendored, lockfiles, ...)`,
+        ]
+      : input.excludedPaths.map(
+          (path) => `- excluded (inventory rules): ${path}`,
+        );
+  const deferred =
+    input.deferredNotReviewed === undefined
+      ? []
+      : [
+          `- deferred (ranked below the repository review cap): ${input.deferredNotReviewed.length} file(s)`,
+        ];
   const lines = [
-    "# Security Review (diff scan)",
+    input.origin === "repository"
+      ? "# Security Review (repository scan)"
+      : "# Security Review (diff scan)",
     "",
     `Coverage: ${completeness}`,
     `Range: ${range}`,
     "",
     "## Scope",
     "",
-    ...input.includePaths.map((path) => `- reviewed: ${path}`),
-    ...input.excludedPaths.map(
-      (path) => `- excluded (inventory rules): ${path}`,
-    ),
+    ...reviewed,
+    ...excluded,
+    ...deferred,
     "",
     "## Threat Model (repository-wide summary)",
     "",

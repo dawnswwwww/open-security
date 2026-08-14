@@ -84,6 +84,17 @@ export interface DiffSpec {
   workingTree: boolean;
 }
 
+/** Lists every tracked file in the repository (repository-wide scans). */
+export async function listRepositoryFiles(
+  repository: string,
+): Promise<string[]> {
+  const output = await git(repository, "ls-files", "-z");
+  return output
+    .split("\0")
+    .filter((path) => path.length > 0)
+    .sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
+}
+
 /**
  * Lists every changed file between the two refs (or between base and the
  * working tree). Deleted files are kept: the methodology requires reviewing
@@ -192,5 +203,11 @@ export function diffTargetId(
   const canonical = workingTree
     ? `working-tree:${baseSha}`
     : `diff:${baseSha}:${headSha ?? "unknown"}`;
+  return createHash("sha256").update(canonical).digest("hex").slice(0, 24);
+}
+
+/** Stable identity for a repository-wide scan of a specific revision. */
+export function repositoryTargetId(headSha: string): string {
+  const canonical = `repository:${headSha}`;
   return createHash("sha256").update(canonical).digest("hex").slice(0, 24);
 }

@@ -36,7 +36,16 @@ Adapted from the Codex Security plugin (Apache-2.0, see NOTICE):
 
 ## CLI
 
+Two scan modes: **diff scan** (review a change set, the CI gate) and
+**repository scan** (ranked whole-repo review — omit `--base`).
+
 ```bash
+# Repository-wide scan: files are ranked by security relevance (auth,
+# crypto, SQL, parsers, ...), top 150 deep-reviewed in batches, the rest
+# honestly reported as deferred coverage.
+open-security scan . --max-files 150
+
+# Diff scan:
 open-security scan . \
   --base origin/main \
   --base-url https://llm-gateway.internal/v1 \

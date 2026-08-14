@@ -12,6 +12,8 @@ export type ScanProgressEvent =
       status: "running" | "done";
       files?: number;
       candidates?: number;
+      batch?: number;
+      batches?: number;
     }
   | {
       phase: "validation";

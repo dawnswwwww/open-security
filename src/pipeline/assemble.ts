@@ -23,9 +23,10 @@ export interface AssembleInput {
   targetId: string;
   displayName: string;
   remote?: string;
-  baseRevision: string;
+  baseRevision?: string;
   headRevision?: string;
   workingTree: boolean;
+  origin: "diff" | "repository";
   inventory: ScanInventory;
   threatModel: ThreatModel;
   validated: readonly ValidatedCandidate[];
@@ -69,6 +70,14 @@ export function assemble(input: AssembleInput): AssembleResult {
     findings.push(toFinding(input, entry, assessment));
   }
 
+  for (const notReviewed of input.inventory.deferredNotReviewed ?? []) {
+    deferred.push({
+      id: `deferred_rank_${deferred.length + 1}`,
+      reason: "Ranked below the repository-scan review cap; not reviewed.",
+      paths: [notReviewed],
+    });
+  }
+
   for (const file of input.inventory.files) {
     surfaces.push({
       id: `surface_file_${file.path.replace(/[^a-z0-9]+/giu, "_")}`,
@@ -78,7 +87,9 @@ export function assemble(input: AssembleInput): AssembleResult {
   }
 
   const completeness: CoverageDocument["completeness"] =
-    deferred.length > 0 ? "partial" : "complete";
+    deferred.length > 0 || (input.inventory.deferredNotReviewed?.length ?? 0) > 0
+      ? "partial"
+      : "complete";
 
   const manifest: ScanManifest = {
     documentType: "open-security.scan-manifest",
@@ -90,11 +101,18 @@ export function assemble(input: AssembleInput): AssembleResult {
       startedAt: input.startedAt.toISOString(),
       completedAt: input.completedAt.toISOString(),
       target: {
-        kind: input.workingTree ? "git_worktree" : "git_diff",
+        kind:
+          input.origin === "repository"
+            ? "git_revision"
+            : input.workingTree
+              ? "git_worktree"
+              : "git_diff",
         targetId: input.targetId,
         displayName: input.displayName,
         ...(input.remote === undefined ? {} : { remote: input.remote }),
-        baseRevision: input.baseRevision,
+        ...(input.origin === "repository" || input.baseRevision === undefined
+          ? {}
+          : { baseRevision: input.baseRevision }),
         ...(input.headRevision === undefined
           ? {}
           : { headRevision: input.headRevision }),
@@ -102,7 +120,10 @@ export function assemble(input: AssembleInput): AssembleResult {
       scope: {
         includePaths: input.inventory.files.map((file) => file.path),
         excludePaths: input.inventory.excluded,
-        summary: `Diff scan: ${input.inventory.files.length} changed file(s) reviewed.`,
+        summary:
+        input.origin === "repository"
+          ? `Repository scan: ${input.inventory.files.length} ranked file(s) deep-reviewed${input.inventory.deferredNotReviewed?.length ? `, ${input.inventory.deferredNotReviewed.length} ranked out (deferred)` : ""}.`
+          : `Diff scan: ${input.inventory.files.length} changed file(s) reviewed.`,
       },
       coverageRef: "coverage.json",
       findingsRef: "findings.json",
@@ -138,9 +159,14 @@ export function assemble(input: AssembleInput): AssembleResult {
     documentType: "open-security.coverage",
     schemaVersion: "1.0",
     scanId: input.scanId,
-    mode: input.workingTree ? "working_tree" : "diff",
+    mode:
+      input.origin === "repository"
+        ? "repository"
+        : input.workingTree
+          ? "working_tree"
+          : "diff",
     completeness,
-    inventoryStrategy: "diff",
+    inventoryStrategy: input.origin,
     includePaths: input.inventory.files.map((file) => file.path),
     excludePaths: input.inventory.excluded,
     surfaces,
