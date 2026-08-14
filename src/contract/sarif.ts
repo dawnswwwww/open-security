@@ -104,7 +104,7 @@ export function toSarif(
           driver: {
             name: "open-security",
             version: toolVersion,
-            informationUri: "https://github.com/example/open-security",
+            informationUri: "https://github.com/dawnswwwww/open-security",
             rules: [...rules.entries()].map(([id, description]) => ({
               id,
               shortDescription: description,
