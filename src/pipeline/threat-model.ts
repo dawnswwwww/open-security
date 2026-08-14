@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { z } from "zod";
 import type { AgentRuntime } from "../runtime/types.js";
 import { threatModelPrompt } from "../prompt/threat-model.js";
-import { extractJsonObject } from "./json.js";
+import { runStructured } from "./json.js";
 
 const threatModelSchema = z.object({
   summary: z.string().min(1),
@@ -42,13 +42,19 @@ export async function loadThreatModel(options: {
     return cached;
   }
   options.onCacheStatus?.("running");
-  const result = await options.runtime.run({
-    prompt: threatModelPrompt(),
-    cwd: options.repository,
-    ...(options.maxTurns === undefined ? {} : { maxTurns: options.maxTurns }),
-    ...(options.signal === undefined ? {} : { signal: options.signal }),
+  const model = await runStructured({
+    runtime: options.runtime,
+    request: {
+      prompt: threatModelPrompt(),
+      cwd: options.repository,
+      ...(options.maxTurns === undefined
+        ? {}
+        : { maxTurns: options.maxTurns }),
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    },
+    schema: threatModelSchema,
+    context: "threat model generation",
   });
-  const model = threatModelSchema.parse(extractJsonObject(result.text));
   await writeCache(cachePath, model);
   return model;
 }

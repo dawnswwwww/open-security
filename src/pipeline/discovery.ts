@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { AgentRuntime } from "../runtime/types.js";
 import type { ScanInventory } from "./inventory.js";
 import { discoveryPrompt } from "../prompt/discovery.js";
-import { extractJsonObject } from "./json.js";
+import { runStructured } from "./json.js";
 
 const candidateSchema = z.object({
   title: z.string().min(1),
@@ -58,21 +58,25 @@ export async function runDiscovery(options: {
   const seen = new Set<string>();
   for (const [batchIndex, batch] of batches.entries()) {
     options.onBatchProgress?.(batchIndex + 1, batches.length);
-    const result = await options.runtime.run({
-      prompt: discoveryPrompt({
-        files: batch,
-        threatModel: options.threatModel,
-        securityMd: options.securityMd,
-        diffSummary: options.diffSummary,
-        origin: options.inventory.origin,
-      }),
-      cwd: options.repository,
-      ...(options.maxTurns === undefined
-        ? {}
-        : { maxTurns: options.maxTurns }),
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    const parsed = await runStructured({
+      runtime: options.runtime,
+      request: {
+        prompt: discoveryPrompt({
+          files: batch,
+          threatModel: options.threatModel,
+          securityMd: options.securityMd,
+          diffSummary: options.diffSummary,
+          origin: options.inventory.origin,
+        }),
+        cwd: options.repository,
+        ...(options.maxTurns === undefined
+          ? {}
+          : { maxTurns: options.maxTurns }),
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
+      },
+      schema: discoveryResultSchema,
+      context: `discovery batch ${batchIndex + 1}/${batches.length}`,
     });
-    const parsed = discoveryResultSchema.parse(extractJsonObject(result.text));
     for (const candidate of parsed.candidates) {
       if (seen.has(candidate.title + candidate.path)) continue;
       seen.add(candidate.title + candidate.path);

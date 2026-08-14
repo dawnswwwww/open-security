@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { AgentRuntime } from "../runtime/types.js";
 import type { Candidate } from "./discovery.js";
 import { validationPrompt } from "../prompt/validation.js";
-import { extractJsonObject } from "./json.js";
+import { runStructured } from "./json.js";
 
 const verdictSchema = z.object({
   disposition: z.enum(["reportable", "suppressed", "not_applicable", "deferred"]),
@@ -48,17 +48,23 @@ export async function runValidation(options: {
 }): Promise<ValidatedCandidate[]> {
   const results: ValidatedCandidate[] = [];
   for (const [index, candidate] of options.candidates.entries()) {
-    const result = await options.runtime.run({
-      prompt: validationPrompt({
-        candidate,
-        threatModel: options.threatModel,
-        securityMd: options.securityMd,
-      }),
-      cwd: options.repository,
-      ...(options.maxTurns === undefined ? {} : { maxTurns: options.maxTurns }),
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    const verdict = await runStructured({
+      runtime: options.runtime,
+      request: {
+        prompt: validationPrompt({
+          candidate,
+          threatModel: options.threatModel,
+          securityMd: options.securityMd,
+        }),
+        cwd: options.repository,
+        ...(options.maxTurns === undefined
+          ? {}
+          : { maxTurns: options.maxTurns }),
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
+      },
+      schema: verdictSchema,
+      context: `validating ${candidate.id} (${candidate.path}: ${candidate.title})`,
     });
-    const verdict = verdictSchema.parse(extractJsonObject(result.text));
     results.push({ candidate, verdict });
     options.onProgress?.(index + 1, options.candidates.length);
   }
