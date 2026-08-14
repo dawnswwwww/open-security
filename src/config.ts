@@ -36,14 +36,14 @@ const runtimeConfigSchema = z.discriminatedUnion("runtime", [
     apiKeyEnv: z.string().min(1).optional(),
     apiKey: z.string().min(1).optional(),
     model: z.string().min(1).optional(),
-    maxTurnsPerPhase: z.number().int().positive().default(80),
+    maxTurnsPerPhase: z.number().int().positive().default(400),
   }),
   z.object({
     runtime: z.literal("acp"),
     /** Command line that launches the ACP agent, e.g. "claude-code-acp". */
     acpCommand: z.string().min(1),
     model: z.string().min(1).optional(),
-    maxTurnsPerPhase: z.number().int().positive().default(80),
+    maxTurnsPerPhase: z.number().int().positive().default(400),
   }),
 ]);
 

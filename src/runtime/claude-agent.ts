@@ -93,6 +93,13 @@ export class ClaudeAgentRuntime implements AgentRuntime {
         };
       }
       if (text === null) {
+        if (errorSubtype === "error_max_turns") {
+          const limit = request.maxTurns ?? this.#config.maxTurnsPerPhase;
+          throw new AgentRuntimeError(
+            `Claude agent run hit the turn limit (${limit}). Large repositories need more turns for the repository-wide threat-model phase; re-run with a higher limit, e.g. --max-turns ${limit * 2}.`,
+            this.kind,
+          );
+        }
         throw new AgentRuntimeError(
           `Claude agent run failed${
             errorSubtype === null ? "" : ` (${errorSubtype})`

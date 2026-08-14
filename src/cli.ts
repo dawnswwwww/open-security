@@ -55,7 +55,7 @@ interface RuntimeOptions {
 
 function runtimeConfigFrom(options: RuntimeOptions): RuntimeConfig {
   const runtime = options.runtime ?? "claude-agent";
-  const maxTurns = Number(options.maxTurns ?? 80);
+  const maxTurns = Number(options.maxTurns ?? 400);
   if (!Number.isInteger(maxTurns) || maxTurns <= 0) {
     throw new Error("--max-turns must be a positive integer.");
   }
