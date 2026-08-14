@@ -1,0 +1,8 @@
+open-security
+
+This product includes security scan methodology, output contract structures,
+and review workflow rules adapted from the Codex Security plugin of the
+openai/codex-security repository (Apache License 2.0).
+
+Copyright 2026 The open-security authors. Licensed under the Apache License,
+Version 2.0.
