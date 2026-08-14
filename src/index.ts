@@ -229,7 +229,16 @@ export class OpenSecurity {
     );
     await writeFile(
       reportPath,
-      renderReport(assembled.findings.findings, assembled.coverage.completeness),
+      renderReport({
+        findings: assembled.findings.findings,
+        completeness: assembled.coverage.completeness,
+        includePaths: inventory.files.map((file) => file.path),
+        excludedPaths: inventory.excluded,
+        threatModelSummary: threatModel.summary,
+        baseRevision: baseSha,
+        ...(headSha === undefined ? {} : { headRevision: headSha }),
+        workingTree: spec.workingTree,
+      }),
       "utf8",
     );
     let sarifPath: string | null = null;
@@ -287,20 +296,46 @@ function createRuntime(config: RuntimeConfig): AgentRuntime {
   return new AcpRuntime({ acpCommand: config.acpCommand });
 }
 
-function renderReport(
-  findings: assembledFindingView[],
-  completeness: string,
-): string {
+function renderReport(input: {
+  findings: assembledFindingView[];
+  completeness: string;
+  includePaths: readonly string[];
+  excludedPaths: readonly string[];
+  threatModelSummary: string;
+  baseRevision: string;
+  headRevision?: string;
+  workingTree: boolean;
+}): string {
+  const { findings, completeness } = input;
+  const range = input.workingTree
+    ? `${input.baseRevision.slice(0, 12)}…working-tree`
+    : `${input.baseRevision.slice(0, 12)}…${(input.headRevision ?? "").slice(0, 12)}`;
   const lines = [
     "# Security Review (diff scan)",
     "",
     `Coverage: ${completeness}`,
+    `Range: ${range}`,
+    "",
+    "## Scope",
+    "",
+    ...input.includePaths.map((path) => `- reviewed: ${path}`),
+    ...input.excludedPaths.map(
+      (path) => `- excluded (inventory rules): ${path}`,
+    ),
+    "",
+    "## Threat Model (repository-wide summary)",
+    "",
+    input.threatModelSummary,
     "",
     "## Findings",
     "",
   ];
   if (findings.length === 0) {
-    lines.push("No reportable findings.", "");
+    lines.push(
+      "No reportable findings. Every changed file in scope was reviewed and",
+      "no plausible security candidate survived validation.",
+      "",
+    );
   }
   for (const finding of findings) {
     lines.push(
