@@ -117,7 +117,3 @@ export function toSarif(
     ],
   };
 }
-
-export function findingTitleOf(finding: Finding): string {
-  return finding.title;
-}

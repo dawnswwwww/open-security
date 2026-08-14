@@ -8,16 +8,6 @@ import { createHash, randomUUID } from "node:crypto";
  * - occurrenceId derived from scanId + fingerprint
  * The anchor carries no line numbers so the fingerprint survives line drift.
  */
-export function slugify(value: string): string {
-  return (
-    value
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 48) || "finding"
-  );
-}
-
 export function anchorFor(ruleId: string, path: string, summary: string): string {
   const raw = `${ruleId}:${path}:${summary}`
     .toLowerCase()
@@ -41,16 +31,6 @@ export function primaryFingerprint(
 
 export function findingIdFrom(primary: string): string {
   return `osf_${createHash("sha256").update(primary).digest("hex").slice(0, 24)}`;
-}
-
-export function occurrenceIdFrom(
-  scanId: string,
-  primary: string,
-): string {
-  return `occ_${createHash("sha256")
-    .update(`${scanId}\0${primary}`)
-    .digest("hex")
-    .slice(0, 24)}`;
 }
 
 export function newScanId(): string {

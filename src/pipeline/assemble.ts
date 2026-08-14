@@ -1,4 +1,3 @@
-import { basename } from "node:path";
 import type { ScanInventory } from "./inventory.js";
 import type { ValidatedCandidate } from "./validation.js";
 import type { SeverityAssessment } from "./severity.js";
@@ -238,8 +237,4 @@ function normalizeRuleId(category: string): string {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
   return normalized.length === 0 ? "security-issue" : normalized;
-}
-
-export function manifestBaseName(displayName: string): string {
-  return basename(displayName) || "repository";
 }

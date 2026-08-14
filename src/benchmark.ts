@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { z } from "zod";
 import { OpenSecurity, type ScanResult } from "./index.js";
 import type { Finding } from "./contract/types.js";
-import { meetsFailThreshold, type SeverityLevel } from "./config.js";
+import { meetsFailThreshold } from "./config.js";
 import { VERSION } from "./version.js";
 
 /**
@@ -200,5 +200,3 @@ export async function loadBenchmarkSuite(
   );
   return suite.cases;
 }
-
-export type { SeverityLevel };

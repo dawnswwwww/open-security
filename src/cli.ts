@@ -6,13 +6,14 @@ import { OpenSecurity } from "./index.js";
 import { RUNTIME_KINDS } from "./config.js";
 import type { SeverityLevel, RuntimeConfig } from "./config.js";
 import { loadBenchmarkSuite, runBenchmark } from "./benchmark.js";
+import { VERSION } from "./version.js";
 
 const program = new Command();
 
 program
   .name("open-security")
   .description("LLM-driven security diff scanner")
-  .version("0.1.0");
+  .version(VERSION);
 
 interface RuntimeOptions {
   runtime?: string;

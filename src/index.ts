@@ -151,7 +151,7 @@ export class OpenSecurity {
     });
 
     // ⑤⑥ severity + assemble
-    const targetId = await diffTargetId(spec, baseSha);
+    const targetId = diffTargetId(spec.workingTree, baseSha, headSha);
     const remote = await remoteUrl(repository);
     const assembled = assemble({
       scanId,

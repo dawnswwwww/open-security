@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -55,10 +56,25 @@ export async function remoteUrl(
 ): Promise<string | undefined> {
   try {
     const url = (await git(repository, "remote", "get-url", "origin")).trim();
-    return url.length === 0 ? undefined : url;
+    if (url.length === 0) return undefined;
+    return stripUrlCredentials(url);
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Removes userinfo from remote URLs before they reach scan artifacts:
+ * `https://user:token@host/path` becomes `https://host/path`. Non-URL git
+ * remotes (ssh aliases, local paths) pass through unchanged.
+ */
+export function stripUrlCredentials(remote: string): string {
+  const schemeMatch = /^([a-z][a-z0-9+.-]*:\/\/)([^/@]+@)(.+)$/iu.exec(
+    remote,
+  );
+  if (schemeMatch === null) return remote;
+  const [, scheme, , rest] = schemeMatch;
+  return `${scheme}${rest}`;
 }
 
 export interface DiffSpec {
@@ -163,11 +179,18 @@ export function parseUnifiedDiffHunks(
   return hunks;
 }
 
-/** Stable target identity for the exact diff under review. */
-export async function diffTargetId(spec: DiffSpec, baseSha: string): Promise<string> {
-  const { createHash } = await import("node:crypto");
-  const canonical = spec.workingTree
+/**
+ * Stable target identity for the exact diff under review. Uses resolved
+ * commit SHAs (not ref names) so repeated scans of the same diff produce
+ * identical fingerprints even when refs move.
+ */
+export function diffTargetId(
+  workingTree: boolean,
+  baseSha: string,
+  headSha: string | undefined,
+): string {
+  const canonical = workingTree
     ? `working-tree:${baseSha}`
-    : `diff:${baseSha}:${spec.head}`;
+    : `diff:${baseSha}:${headSha ?? "unknown"}`;
   return createHash("sha256").update(canonical).digest("hex").slice(0, 24);
 }
