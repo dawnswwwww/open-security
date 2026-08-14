@@ -201,7 +201,7 @@ export class OpenSecurity {
       runtime: this.#runtime,
       repository: input.repository,
       cacheKey: threatModelCacheKey(input.repository, cacheRevision),
-      outputDir: input.outputDir,
+      cacheDir: join(input.repository, "..", ".open-security", "cache"),
       ...(this.#config.runtime.maxTurnsPerPhase === undefined
         ? {}
         : { maxTurns: this.#config.runtime.maxTurnsPerPhase }),

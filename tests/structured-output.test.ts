@@ -40,6 +40,25 @@ describe("extractJsonObject diagnostics", () => {
     expect(() => extractJsonObject("")).toThrow(/<empty model output>/u);
   });
 
+  test("extracts the final JSON after per-file narration", () => {
+    const narrated = [
+      "I acknowledge the reminders. Let me analyze each file:",
+      "",
+      "**auth.rs**: reads a secret from stdin. No vulnerabilities — the secret",
+      'is only reported as a boolean. The expression `foo { "bar" }` in the',
+      "file is quoted prose, not JSON.",
+      "",
+      'Final answer: {"ok": true}',
+    ].join("\n");
+    expect(extractJsonObject(narrated)).toEqual({ ok: true });
+  });
+
+  test("prefers the last object when several appear", () => {
+    expect(extractJsonObject('draft {"a":1} final {"ok": true}')).toEqual({
+      ok: true,
+    });
+  });
+
   test("still accepts fenced and wrapped JSON", () => {
     expect(extractJsonObject('```json\n{"ok": true}\n```')).toEqual({
       ok: true,
@@ -65,7 +84,7 @@ describe("runStructured retry", () => {
     expect(parsed).toEqual({ ok: true });
     expect(runtime.prompts).toHaveLength(2);
     expect(runtime.prompts[0]).toBe("original");
-    expect(runtime.prompts[1]).toContain("not valid JSON");
+    expect(runtime.prompts[1]).toContain("could not be parsed");
     expect(runtime.prompts[1]).toContain("original");
   });
 

@@ -88,10 +88,10 @@ describe("ACP runtime end to end (fake agent process)", () => {
     const findings = JSON.parse(await readFile(result.findingsPath, "utf8"));
     expect(findings.documentType).toBe("open-security.findings");
     expect(findings.findings[0]?.taxonomy?.cwe).toEqual(["CWE-22"]);
-    // The threat model cache must be populated by the ACP session too.
-    const cacheFiles = await readdir(join(result.outputDir, "cache")).catch(
-      () => [],
-    );
+    // The threat model cache lives in the stable per-repository directory.
+    const cacheFiles = await readdir(
+      join(repository, "..", ".open-security", "cache"),
+    ).catch(() => []);
     expect(cacheFiles.some((name) => name.startsWith("threat-model-"))).toBe(
       true,
     );

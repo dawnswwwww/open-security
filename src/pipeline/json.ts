@@ -5,26 +5,29 @@ import type {
 } from "../runtime/types.js";
 
 const SNIPPET_LIMIT = 400;
+const MAX_OBJECT_CANDIDATES = 64;
 
 /**
- * Extracts the first JSON object from model output. Models occasionally wrap
- * JSON in markdown fences or prose; the pipeline tolerates both but never
- * repairs malformed JSON silently — parse failures surface as errors that
- * quote the beginning of the raw output for diagnosis.
+ * Extracts the JSON object from model output. Models wrap JSON in fences,
+ * prose, or per-file narration; this extractor is string-aware (braces
+ * inside JSON strings do not confuse it) and prefers the LAST balanced
+ * top-level object, because narrating models put their final answer at the
+ * end. Parse failures quote the beginning of the raw output for diagnosis.
  */
 export function extractJsonObject(text: string): unknown {
   const fenced = /```(?:json)?\s*([\s\S]*?)```/u.exec(text);
-  const candidates: string[] = [];
-  if (fenced !== null) candidates.push(fenced[1]!.trim());
-  const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
-  if (start >= 0 && end > start) candidates.push(text.slice(start, end + 1));
-  candidates.push(text.trim());
-  for (const candidate of candidates) {
+  if (fenced !== null) {
+    try {
+      return JSON.parse(fenced[1]!.trim());
+    } catch {
+      // Fall through to the balanced-object scanner.
+    }
+  }
+  for (const candidate of balancedObjects(text).reverse()) {
     try {
       return JSON.parse(candidate);
     } catch {
-      // Try the next candidate shape.
+      // Try the next object span.
     }
   }
   const snippet =
@@ -36,17 +39,53 @@ export function extractJsonObject(text: string): unknown {
   );
 }
 
+/**
+ * Returns every top-level balanced `{...}` span in the text. String literals
+ * are skipped (quotes and escapes), so braces inside strings never open or
+ * close an object.
+ */
+function balancedObjects(text: string): string[] {
+  const spans: string[] = [];
+  const stack: number[] = [];
+  let inString = false;
+  let escaped = false;
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index]!;
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === '"') inString = false;
+      continue;
+    }
+    if (character === '"') {
+      inString = true;
+      continue;
+    }
+    if (character === "{") {
+      stack.push(index);
+    } else if (character === "}" && stack.length > 0) {
+      const start = stack.pop()!;
+      if (stack.length === 0) {
+        spans.push(text.slice(start, index + 1));
+        if (spans.length >= MAX_OBJECT_CANDIDATES) break;
+      }
+    }
+  }
+  return spans;
+}
+
 const CORRECTION =
-  "\n\nIMPORTANT: Your previous response was not valid JSON for the required " +
-  "schema and could not be parsed. Respond again with ONLY the raw JSON " +
-  "object — no prose before or after, no markdown fences.";
+  "\n\nIMPORTANT: Your previous response could not be parsed. It began with " +
+  "narration instead of JSON. Do the analysis silently, then respond with " +
+  "ONLY the raw JSON object matching the required schema — no prose before " +
+  "or after it, no markdown fences, no per-file commentary.";
 
 /**
  * Runs an agent prompt and parses the reply against a zod schema. A parse
- * failure triggers exactly one corrective retry (models often wrap JSON in
- * prose); a second failure throws an error that includes the parse failure
- * and the provided context so long scans fail diagnosably at the exact
- * candidate or batch that broke.
+ * failure triggers exactly one corrective retry (models often narrate
+ * instead of emitting JSON); a second failure throws an error that includes
+ * the parse failure and the provided context so long scans fail
+ * diagnosably at the exact candidate or batch that broke.
  */
 export async function runStructured<Schema extends z.ZodTypeAny>(options: {
   runtime: AgentRuntime;

@@ -26,14 +26,14 @@ export async function loadThreatModel(options: {
   runtime: AgentRuntime;
   repository: string;
   cacheKey: string;
-  outputDir: string;
+  /** Stable directory shared across scans of the same repository. */
+  cacheDir: string;
   maxTurns?: number;
   signal?: AbortSignal;
   onCacheStatus?: (status: "cached" | "running") => void;
 }): Promise<ThreatModel> {
   const cachePath = join(
-    options.outputDir,
-    "cache",
+    options.cacheDir,
     `threat-model-${options.cacheKey}.json`,
   );
   const cached = await readCache(cachePath);

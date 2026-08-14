@@ -69,6 +69,7 @@ async function createFixtureRepository(): Promise<string> {
 /** Canned agent: distinguishes phases by prompt content. */
 class MockRuntime implements AgentRuntime {
   public readonly kind = "mock";
+  public threatModelCalls = 0;
   readonly #threatModel = {
     summary:
       "The service extracts user-supplied archives. Assets include the filesystem and configuration files.",
@@ -130,6 +131,7 @@ class MockRuntime implements AgentRuntime {
       };
     }
     if (request.prompt.includes("building a repository threat model")) {
+      this.threatModelCalls += 1;
       return { text: JSON.stringify(this.#threatModel) };
     }
     throw new Error("MockRuntime received an unexpected prompt.");
@@ -207,6 +209,32 @@ describe("diff scan end to end (mock runtime)", () => {
     const sarif = JSON.parse(await readFile(result.sarifPath!, "utf8"));
     expect(sarif.version).toBe("2.1.0");
     expect(sarif.runs[0].results).toHaveLength(1);
+  });
+
+  test("reuses the cached threat model across scans of the same revision", async () => {
+    const repository = await createFixtureRepository();
+    const runtime = new MockRuntime();
+    const outputA = join(repository, "..", `cache-a-${Date.now()}`);
+    const outputB = join(repository, "..", `cache-b-${Date.now()}`);
+    temporaryDirectories.push(outputA, outputB);
+    const scanner = new OpenSecurity({
+      runtime: { runtime: "claude-agent", maxTurnsPerPhase: 5 },
+      agent: runtime,
+    });
+    await scanner.scanDiff(repository, {
+      base: "HEAD~1",
+      head: "HEAD",
+      workingTree: false,
+      outputDir: outputA,
+    });
+    expect(runtime.threatModelCalls).toBe(1);
+    await scanner.scanDiff(repository, {
+      base: "HEAD~1",
+      head: "HEAD",
+      workingTree: false,
+      outputDir: outputB,
+    });
+    expect(runtime.threatModelCalls).toBe(1);
   });
 
   test("fail-on-severity gates the exit decision", async () => {
