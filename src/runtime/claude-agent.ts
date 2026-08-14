@@ -60,6 +60,7 @@ export class ClaudeAgentRuntime implements AgentRuntime {
       if (stderrTail.length > 20) stderrTail.splice(0, stderrTail.length - 20);
     };
     let resultText: string | null = null;
+    const maxTurns = request.maxTurns ?? this.#config.maxTurnsPerPhase;
     try {
       const messages = query({
         prompt: request.prompt,
@@ -67,7 +68,7 @@ export class ClaudeAgentRuntime implements AgentRuntime {
           cwd: request.cwd,
           tools: [...READ_ONLY_TOOLS],
           systemPrompt: request.systemPrompt ?? SYSTEM_PROMPT,
-          maxTurns: request.maxTurns ?? this.#config.maxTurnsPerPhase,
+          ...(maxTurns === undefined ? {} : { maxTurns }),
           abortController,
           env: this.#environment(),
           stderr,
@@ -94,9 +95,9 @@ export class ClaudeAgentRuntime implements AgentRuntime {
       }
       if (text === null) {
         if (errorSubtype === "error_max_turns") {
-          const limit = request.maxTurns ?? this.#config.maxTurnsPerPhase;
+          const limit = maxTurns ?? 0;
           throw new AgentRuntimeError(
-            `Claude agent run hit the turn limit (${limit}). Large repositories need more turns for the repository-wide threat-model phase; re-run with a higher limit, e.g. --max-turns ${limit * 2}.`,
+            `Claude agent run hit the turn limit (${limit}). Large repositories need more turns for the repository-wide threat-model phase; re-run with a higher limit, e.g. --max-turns ${Math.max(limit * 2, 100)}.`,
             this.kind,
           );
         }

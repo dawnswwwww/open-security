@@ -55,10 +55,12 @@ interface RuntimeOptions {
 
 function runtimeConfigFrom(options: RuntimeOptions): RuntimeConfig {
   const runtime = options.runtime ?? "claude-agent";
-  const maxTurns = Number(options.maxTurns ?? 400);
-  if (!Number.isInteger(maxTurns) || maxTurns <= 0) {
+  const maxTurns =
+    options.maxTurns === undefined ? undefined : Number(options.maxTurns);
+  if (maxTurns !== undefined && (!Number.isInteger(maxTurns) || maxTurns <= 0)) {
     throw new Error("--max-turns must be a positive integer.");
   }
+  const turnLimit = maxTurns === undefined ? {} : { maxTurnsPerPhase: maxTurns };
   if (runtime === "claude-agent") {
     return {
       runtime: "claude-agent",
@@ -72,7 +74,7 @@ function runtimeConfigFrom(options: RuntimeOptions): RuntimeConfig {
         ? {}
         : { apiKey: String(options.apiKey) }),
       ...(options.model === undefined ? {} : { model: String(options.model) }),
-      maxTurnsPerPhase: maxTurns,
+      ...turnLimit,
     };
   }
   if (runtime === "acp") {
@@ -83,7 +85,7 @@ function runtimeConfigFrom(options: RuntimeOptions): RuntimeConfig {
       runtime: "acp",
       acpCommand: String(options.acpCommand),
       ...(options.model === undefined ? {} : { model: String(options.model) }),
-      maxTurnsPerPhase: maxTurns,
+      ...turnLimit,
     };
   }
   throw new Error(

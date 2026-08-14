@@ -121,7 +121,7 @@ injection point:
 
 ```ts
 const scanner = new OpenSecurity({
-  runtime: { runtime: "claude-agent", maxTurnsPerPhase: 400 },
+  runtime: { runtime: "claude-agent", maxTurnsPerPhase: 400 // optional cap; omit for unlimited },
   agent: myRuntime, // implements AgentRuntime
 });
 ```
