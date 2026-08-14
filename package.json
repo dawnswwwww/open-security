@@ -1,5 +1,5 @@
 {
-  "name": "open-security",
+  "name": "@dawnswwwww/open-security",
   "version": "0.1.0",
   "description": "LLM-driven security diff scanner with a pluggable agent runtime (Claude Agent SDK by default, ACP-compatible agents supported)",
   "license": "Apache-2.0",

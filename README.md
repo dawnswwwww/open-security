@@ -86,10 +86,19 @@ open-security benchmark suite.json --output-dir benchmark-out/ \
 test suite with a mock runtime; the quality numbers themselves depend on your
 model and prompts — run them against your internal endpoint first.
 
+## Install
+
+```bash
+npm install @dawnswwwww/open-security
+npx @dawnswwwww/open-security --help
+```
+
+The CLI command is `open-security` regardless of the scoped package name.
+
 ## SDK
 
 ```ts
-import { OpenSecurity } from "open-security";
+import { OpenSecurity } from "@dawnswwwww/open-security";
 
 const scanner = new OpenSecurity({
   runtime: {
