@@ -32,6 +32,20 @@ import { toSarif } from "./contract/sarif.js";
 import { newScanId } from "./contract/identity.js";
 import { VERSION } from "./version.js";
 
+export type {
+  OpenSecurityConfig,
+  RuntimeConfig,
+  RuntimeKind,
+  ScanOptions,
+  SeverityLevel,
+} from "./config.js";
+export type {
+  AgentRuntime,
+  AgentRunRequest,
+  AgentRunResult,
+} from "./runtime/types.js";
+export { RUNTIME_KINDS, meetsFailThreshold } from "./config.js";
+
 export interface ScanResult {
   scanId: string;
   outputDir: string;
