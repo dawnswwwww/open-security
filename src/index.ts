@@ -31,6 +31,7 @@ import { resolveSecurityMd } from "./pipeline/security-md.js";
 import { toSarif } from "./contract/sarif.js";
 import { newScanId } from "./contract/identity.js";
 import { VERSION } from "./version.js";
+import type { ScanProgressCallback } from "./progress.js";
 
 export type {
   OpenSecurityConfig,
@@ -45,6 +46,10 @@ export type {
   AgentRunResult,
 } from "./runtime/types.js";
 export { RUNTIME_KINDS, meetsFailThreshold } from "./config.js";
+export type {
+  ScanProgressEvent,
+  ScanProgressCallback,
+} from "./progress.js";
 
 export interface ScanResult {
   scanId: string;
@@ -77,6 +82,7 @@ export class OpenSecurity {
   public async scanDiff(
     repositoryInput: string,
     options: ScanOptions,
+    onProgress?: ScanProgressCallback,
   ): Promise<ScanResult> {
     const repository = await resolveGitRoot(repositoryInput);
     const spec: DiffSpec = {
@@ -100,6 +106,11 @@ export class OpenSecurity {
     const changed = await listChangedFiles(repository, spec);
     const hunks = await diffHunks(repository, spec);
     const inventory = buildInventory(changed, hunks);
+    onProgress?.({
+      phase: "inventory",
+      filesInScope: inventory.files.length,
+      excluded: inventory.excluded.length,
+    });
 
     // ② threat model (cached per repository + head revision)
     const threatModel = await loadThreatModel({
@@ -113,11 +124,18 @@ export class OpenSecurity {
       ...(this.#config.signal === undefined
         ? {}
         : { signal: this.#config.signal }),
+      onCacheStatus: (status) => onProgress?.({ phase: "threat-model", status }),
     });
+    onProgress?.({ phase: "threat-model", status: "done" });
     const securityMd = await resolveSecurityMd(repository);
     const threatModelText = JSON.stringify(threatModel, null, 2);
 
     // ③ discovery
+    onProgress?.({
+      phase: "discovery",
+      status: "running",
+      files: inventory.files.length,
+    });
     const candidates = await runDiscovery({
       runtime: this.#runtime,
       repository,
@@ -134,8 +152,21 @@ export class OpenSecurity {
         ? {}
         : { signal: this.#config.signal }),
     });
+    onProgress?.({
+      phase: "discovery",
+      status: "done",
+      candidates: candidates.length,
+    });
 
     // ④ validation (fresh session per candidate)
+    if (candidates.length > 0) {
+      onProgress?.({
+        phase: "validation",
+        status: "running",
+        completed: 0,
+        total: candidates.length,
+      });
+    }
     const validated = await runValidation({
       runtime: this.#runtime,
       repository,
@@ -148,7 +179,10 @@ export class OpenSecurity {
       ...(this.#config.signal === undefined
         ? {}
         : { signal: this.#config.signal }),
+      onProgress: (completed, total) =>
+        onProgress?.({ phase: "validation", status: "running", completed, total }),
     });
+    onProgress?.({ phase: "validation", status: "done" });
 
     // ⑤⑥ severity + assemble
     const targetId = diffTargetId(spec.workingTree, baseSha, headSha);
@@ -167,6 +201,11 @@ export class OpenSecurity {
       threatModel,
       validated,
       producer: { name: "open-security", version: VERSION },
+    });
+    onProgress?.({
+      phase: "assemble",
+      findings: assembled.findings.findings.length,
+      deferred: assembled.coverage.deferred.length,
     });
 
     const findingsPath = join(outputDir, "findings.json");
@@ -220,7 +259,7 @@ export class OpenSecurity {
       reported.some((finding) =>
         meetsFailThreshold(finding.severity.level, options.failOnSeverity!),
       );
-    return {
+    const result: ScanResult = {
       scanId,
       outputDir,
       findingsPath,
@@ -232,6 +271,12 @@ export class OpenSecurity {
       maxSeverity,
       failedThreshold,
     };
+    onProgress?.({
+      phase: "complete",
+      findings: result.findings,
+      outputDir,
+    });
+    return result;
   }
 }
 

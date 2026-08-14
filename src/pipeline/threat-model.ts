@@ -29,6 +29,7 @@ export async function loadThreatModel(options: {
   outputDir: string;
   maxTurns?: number;
   signal?: AbortSignal;
+  onCacheStatus?: (status: "cached" | "running") => void;
 }): Promise<ThreatModel> {
   const cachePath = join(
     options.outputDir,
@@ -36,7 +37,11 @@ export async function loadThreatModel(options: {
     `threat-model-${options.cacheKey}.json`,
   );
   const cached = await readCache(cachePath);
-  if (cached !== null) return cached;
+  if (cached !== null) {
+    options.onCacheStatus?.("cached");
+    return cached;
+  }
+  options.onCacheStatus?.("running");
   const result = await options.runtime.run({
     prompt: threatModelPrompt(),
     cwd: options.repository,

@@ -7,6 +7,34 @@ import { RUNTIME_KINDS } from "./config.js";
 import type { SeverityLevel, RuntimeConfig } from "./config.js";
 import { loadBenchmarkSuite, runBenchmark } from "./benchmark.js";
 import { VERSION } from "./version.js";
+import type { ScanProgressEvent } from "./progress.js";
+
+const START_TIME = Date.now();
+
+/** Renders progress events as timestamped stderr lines; stdout stays clean. */
+function progressLine(event: ScanProgressEvent): string {
+  const elapsed = `${((Date.now() - START_TIME) / 1000).toFixed(0)}s`;
+  switch (event.phase) {
+    case "inventory":
+      return `[${elapsed}] inventory: ${event.filesInScope} file(s) in review scope, ${event.excluded} excluded`;
+    case "threat-model":
+      return event.status === "cached"
+        ? `[${elapsed}] threat model: loaded from cache`
+        : `[${elapsed}] threat model: ${event.status}${event.status === "running" ? " (large repositories can take several minutes)" : ""}`;
+    case "discovery":
+      return event.status === "running"
+        ? `[${elapsed}] discovery: reviewing ${event.files} changed file(s)`
+        : `[${elapsed}] discovery: ${event.candidates} candidate(s) found`;
+    case "validation":
+      return event.status === "running"
+        ? `[${elapsed}] validation: candidate ${event.completed}/${event.total} (each candidate gets an independent session)`
+        : `[${elapsed}] validation: done`;
+    case "assemble":
+      return `[${elapsed}] assemble: ${event.findings} finding(s) reportable, ${event.deferred} deferred`;
+    case "complete":
+      return `[${elapsed}] complete: ${event.findings} finding(s), output in ${event.outputDir}`;
+  }
+}
 
 const program = new Command();
 
@@ -97,19 +125,23 @@ addRuntimeOptions(
   const scanner = new OpenSecurity({
     runtime: runtimeConfigFrom(options as RuntimeOptions),
   });
-  const result = await scanner.scanDiff(repository, {
-    base: String(options["base"]),
-    head: options["head"] === undefined ? "HEAD" : String(options["head"]),
-    workingTree: options["workingTree"] === true,
-    ...(options["failOnSeverity"] === undefined
-      ? {}
-      : {
-          failOnSeverity: String(options["failOnSeverity"]) as SeverityLevel,
-        }),
-    ...(options["outputDir"] === undefined
-      ? {}
-      : { outputDir: String(options["outputDir"]) }),
-  });
+  const result = await scanner.scanDiff(
+    repository,
+    {
+      base: String(options["base"]),
+      head: options["head"] === undefined ? "HEAD" : String(options["head"]),
+      workingTree: options["workingTree"] === true,
+      ...(options["failOnSeverity"] === undefined
+        ? {}
+        : {
+            failOnSeverity: String(options["failOnSeverity"]) as SeverityLevel,
+          }),
+      ...(options["outputDir"] === undefined
+        ? {}
+        : { outputDir: String(options["outputDir"]) }),
+    },
+    (event) => process.stderr.write(`${progressLine(event)}\n`),
+  );
   if (options["json"] === true) {
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   } else {

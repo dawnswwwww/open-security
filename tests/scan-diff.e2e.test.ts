@@ -148,12 +148,41 @@ describe("diff scan end to end (mock runtime)", () => {
       },
       agent: new MockRuntime(),
     });
-    const result = await scanner.scanDiff(repository, {
-      base: "HEAD~1",
-      head: "HEAD",
-      workingTree: false,
-      outputDir,
-    });
+    const phases: string[] = [];
+    const result = await scanner.scanDiff(
+      repository,
+      {
+        base: "HEAD~1",
+        head: "HEAD",
+        workingTree: false,
+        outputDir,
+      },
+      (event) => {
+        phases.push(
+          event.phase === "inventory"
+            ? "inventory"
+            : event.phase === "threat-model"
+              ? `threat-model:${event.status}`
+              : event.phase === "discovery"
+                ? `discovery:${event.status}`
+                : event.phase === "validation"
+                  ? `validation:${event.status}`
+                  : event.phase,
+        );
+      },
+    );
+    expect(phases).toEqual([
+      "inventory",
+      "threat-model:running",
+      "threat-model:done",
+      "discovery:running",
+      "discovery:done",
+      "validation:running",
+      "validation:running",
+      "validation:done",
+      "assemble",
+      "complete",
+    ]);
 
     expect(result.findings).toBe(1);
     expect(result.failedThreshold).toBe(false);
