@@ -56,6 +56,36 @@ Notes:
 - Exit code 1 when a finding meets `--fail-on-severity`; exit code 2 on
   operational errors. `--json` prints a machine-readable summary.
 
+### ACP runtime
+
+Any Agent Client Protocol agent works as the executor. The agent process is
+launched fresh per pipeline phase (session isolation), model routing belongs
+to the agent's own configuration, and open-security enforces a read-only tool
+policy (only `read`, `search`, and `think` tool kinds are approved):
+
+```bash
+open-security scan . --base origin/main \
+  --runtime acp --acp-command "claude-code-acp"
+```
+
+### Quality benchmark
+
+Measure recall and precision against repositories with known ground-truth
+findings before trusting the scanner as a CI gate:
+
+```bash
+open-security benchmark suite.json --output-dir benchmark-out/ \
+  --base-url https://llm-gateway.internal/v1 \
+  --api-key-env INTERNAL_LLM_KEY --model my-model
+```
+
+`suite.json` lists cases (repository, diff refs) plus expected findings
+(category + path, optional minimum severity); see
+`tests/fixtures/benchmark-suite.example.json`. The report lands in
+`benchmark-out/benchmark-report.json`. Harness mechanics are covered by the
+test suite with a mock runtime; the quality numbers themselves depend on your
+model and prompts — run them against your internal endpoint first.
+
 ## SDK
 
 ```ts

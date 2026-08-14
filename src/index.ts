@@ -9,6 +9,7 @@ import {
 } from "./config.js";
 import type { AgentRuntime } from "./runtime/types.js";
 import { ClaudeAgentRuntime } from "./runtime/claude-agent.js";
+import { AcpRuntime } from "./runtime/acp.js";
 import {
   diffHunks,
   diffTargetId,
@@ -224,9 +225,7 @@ function createRuntime(config: RuntimeConfig): AgentRuntime {
   if (config.runtime === "claude-agent") {
     return new ClaudeAgentRuntime(config);
   }
-  throw new Error(
-    `Runtime "${config.runtime}" is not implemented yet; use "claude-agent".`,
-  );
+  return new AcpRuntime({ acpCommand: config.acpCommand });
 }
 
 function renderReport(

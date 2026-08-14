@@ -1,0 +1,31 @@
+{
+  "cases": [
+    {
+      "name": "archive-traversal",
+      "repository": "/path/to/fixtures/archive-traversal-repo",
+      "base": "HEAD~1",
+      "head": "HEAD",
+      "expected": [
+        {
+          "category": "path-traversal",
+          "path": "src/extract.py",
+          "minSeverity": "high",
+          "note": "Zip entry name flows unchecked into filesystem write"
+        }
+      ]
+    },
+    {
+      "name": "ssrf-fetch",
+      "repository": "/path/to/fixtures/ssrf-repo",
+      "base": "main",
+      "head": "feature/webhook",
+      "expected": [
+        {
+          "category": "ssrf",
+          "path": "src/webhook.js",
+          "minSeverity": "medium"
+        }
+      ]
+    }
+  ]
+}
