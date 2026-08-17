@@ -13,7 +13,12 @@ import type { RuntimeConfig } from "../config.js";
  */
 const READ_ONLY_TOOLS = ["Read", "Grep", "Glob"] as const;
 
-const SYSTEM_PROMPT = [
+/**
+ * Shared reviewer persona. Runtimes that execute tools in-process must pass
+ * this through verbatim: the untrusted-data framing is the prompt-injection
+ * defense for every pipeline phase.
+ */
+export const REVIEWER_SYSTEM_PROMPT = [
   "You are a security code reviewer embedded in an automated scanner.",
   "You inspect source code strictly read-only.",
   "Follow the task prompt exactly and answer with the requested output only.",
@@ -67,7 +72,7 @@ export class ClaudeAgentRuntime implements AgentRuntime {
         options: {
           cwd: request.cwd,
           tools: [...READ_ONLY_TOOLS],
-          systemPrompt: request.systemPrompt ?? SYSTEM_PROMPT,
+          systemPrompt: request.systemPrompt ?? REVIEWER_SYSTEM_PROMPT,
           ...(maxTurns === undefined ? {} : { maxTurns }),
           abortController,
           env: this.#environment(),

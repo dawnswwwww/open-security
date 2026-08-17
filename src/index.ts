@@ -11,6 +11,7 @@ import {
 import type { AgentRuntime } from "./runtime/types.js";
 import { ClaudeAgentRuntime } from "./runtime/claude-agent.js";
 import { AcpRuntime } from "./runtime/acp.js";
+import { PiRuntime } from "./runtime/pi.js";
 import {
   diffHunks,
   diffTargetId,
@@ -420,6 +421,9 @@ export class OpenSecurity {
 function createRuntime(config: RuntimeConfig): AgentRuntime {
   if (config.runtime === "claude-agent") {
     return new ClaudeAgentRuntime(config);
+  }
+  if (config.runtime === "pi") {
+    return new PiRuntime(config);
   }
   return new AcpRuntime({ acpCommand: config.acpCommand });
 }

@@ -3,7 +3,7 @@ import { Command } from "commander";
 import { mkdir } from "node:fs/promises";
 import { writeFile } from "node:fs/promises";
 import { OpenSecurity } from "./index.js";
-import { RUNTIME_KINDS } from "./config.js";
+import { inferRuntimeKind, RUNTIME_KINDS } from "./config.js";
 import type { SeverityLevel, RuntimeConfig } from "./config.js";
 import { loadBenchmarkSuite, runBenchmark } from "./benchmark.js";
 import { VERSION } from "./version.js";
@@ -49,6 +49,8 @@ program
 interface RuntimeOptions {
   runtime?: string;
   baseUrl?: string;
+  api?: string;
+  provider?: string;
   acpCommand?: string;
   apiKeyEnv?: string;
   apiKey?: string;
@@ -56,8 +58,28 @@ interface RuntimeOptions {
   maxTurns?: number | string;
 }
 
+function parsePiApi(value: string): "openai-completions" | "anthropic-messages" {
+  if (value === "openai-completions" || value === "anthropic-messages") {
+    return value;
+  }
+  throw new Error(
+    "--api must be openai-completions or anthropic-messages (pi runtime).",
+  );
+}
+
 function runtimeConfigFrom(options: RuntimeOptions): RuntimeConfig {
-  const runtime = options.runtime ?? "claude-agent";
+  const api =
+    options.api === undefined ? undefined : parsePiApi(String(options.api));
+  const runtime =
+    options.runtime ??
+    inferRuntimeKind(
+      options.baseUrl === undefined ? undefined : String(options.baseUrl),
+      api,
+    );
+  if (api !== undefined && runtime !== "pi") {
+    throw new Error("--api applies to the pi runtime only.");
+  }
+  const inferred = options.runtime === undefined && runtime === "pi";
   const maxTurns =
     options.maxTurns === undefined ? undefined : Number(options.maxTurns);
   if (maxTurns !== undefined && (!Number.isInteger(maxTurns) || maxTurns <= 0)) {
@@ -91,6 +113,36 @@ function runtimeConfigFrom(options: RuntimeOptions): RuntimeConfig {
       ...turnLimit,
     };
   }
+  if (runtime === "pi") {
+    if (options.baseUrl === undefined) {
+      throw new Error(
+        "--base-url is required with --runtime pi (e.g. https://api.openai.com/v1 or https://api.anthropic.com).",
+      );
+    }
+    if (options.model === undefined) {
+      throw new Error(
+        `--model is required with --runtime pi${
+          inferred ? " (auto-selected from --base-url)" : ""
+        }.`,
+      );
+    }
+    return {
+      runtime: "pi",
+      baseUrl: String(options.baseUrl),
+      model: String(options.model),
+      ...(api === undefined ? {} : { api }),
+      ...(options.provider === undefined
+        ? {}
+        : { provider: String(options.provider) }),
+      ...(options.apiKeyEnv === undefined
+        ? {}
+        : { apiKeyEnv: String(options.apiKeyEnv) }),
+      ...(options.apiKey === undefined
+        ? {}
+        : { apiKey: String(options.apiKey) }),
+      ...turnLimit,
+    };
+  }
   throw new Error(
     `Unknown runtime: ${runtime}; expected one of ${RUNTIME_KINDS.join(" | ")}.`,
   );
@@ -100,9 +152,20 @@ function addRuntimeOptions(command: Command): Command {
   return command
     .option(
       "--runtime <kind>",
-      `Agent runtime: ${RUNTIME_KINDS.join(" | ")} (default: claude-agent)`,
+      `Agent runtime: ${RUNTIME_KINDS.join(" | ")} (default: inferred from --base-url; claude-agent when unset)`,
     )
-    .option("--base-url <url>", "Anthropic-protocol base URL (claude-agent runtime)")
+    .option(
+      "--base-url <url>",
+      "Model API root: Anthropic protocol (claude-agent) or OpenAI-compatible (pi)",
+    )
+    .option(
+      "--api <protocol>",
+      "Wire protocol for the pi runtime: openai-completions | anthropic-messages (default: openai-completions)",
+    )
+    .option(
+      "--provider <name>",
+      "pi runtime provider label for credential resolution (default: inferred)",
+    )
     .option("--acp-command <command>", "ACP agent command line (acp runtime)")
     .option("--api-key-env <name>", "Environment variable holding the API key")
     .option("--api-key <key>", "API key (prefer --api-key-env)")

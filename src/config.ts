@@ -3,10 +3,28 @@ import { z } from "zod";
 /**
  * Runtime selection. `claude-agent` drives the Claude Agent SDK (Anthropic
  * Messages protocol; custom endpoints via baseUrl). `acp` launches any
- * ACP-compatible agent process and lets it own model routing.
+ * ACP-compatible agent process and lets it own model routing. `pi` embeds
+ * the pi agent loop (https://github.com/earendil-works/pi) and routes it at
+ * any OpenAI Chat Completions-compatible endpoint.
  */
-export const RUNTIME_KINDS = ["claude-agent", "acp"] as const;
+export const RUNTIME_KINDS = ["claude-agent", "acp", "pi"] as const;
 export type RuntimeKind = (typeof RUNTIME_KINDS)[number];
+
+/**
+ * Default runtime when `--runtime` is omitted. An explicit protocol (`--api`)
+ * always selects pi. Bare invocations keep the zero-config claude-agent
+ * path; a `--base-url` that clearly is not an Anthropic endpoint cannot work
+ * under claude-agent anyway, so pi is auto-selected for it
+ * (OpenAI-compatible endpoints).
+ */
+export function inferRuntimeKind(
+  baseUrl: string | undefined,
+  api?: string,
+): RuntimeKind {
+  if (api !== undefined) return "pi";
+  if (baseUrl === undefined) return "claude-agent";
+  return /anthropic|claude/iu.test(baseUrl) ? "claude-agent" : "pi";
+}
 
 export const SeverityLevels = [
   "critical",
@@ -43,6 +61,27 @@ const runtimeConfigSchema = z.discriminatedUnion("runtime", [
     /** Command line that launches the ACP agent, e.g. "claude-code-acp". */
     acpCommand: z.string().min(1),
     model: z.string().min(1).optional(),
+    maxTurnsPerPhase: z.number().int().positive().optional(),
+  }),
+  z.object({
+    runtime: z.literal("pi"),
+    /** Model API root, e.g. https://api.openai.com/v1 or https://api.anthropic.com. */
+    baseUrl: z.string().url(),
+    /** Model id the endpoint serves. */
+    model: z.string().min(1),
+    /**
+     * Wire protocol. Defaults to openai-completions; pass
+     * "anthropic-messages" explicitly for Anthropic-protocol endpoints.
+     */
+    api: z.enum(["openai-completions", "anthropic-messages"]).optional(),
+    /** Provider label pi-ai resolves credentials under (default per api). */
+    provider: z.string().min(1).optional(),
+    apiKeyEnv: z.string().min(1).optional(),
+    apiKey: z.string().min(1).optional(),
+    /** Model context window claim (default 128000); used for overflow handling. */
+    contextWindow: z.number().int().positive().optional(),
+    /** Per-request output token cap (default 16384). */
+    maxTokens: z.number().int().positive().optional(),
     maxTurnsPerPhase: z.number().int().positive().optional(),
   }),
 ]);
