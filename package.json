@@ -1,6 +1,6 @@
 {
   "name": "@dawnswwwww/open-security",
-  "version": "0.1.9",
+  "version": "0.2.0",
   "description": "LLM-driven security diff scanner with a pluggable agent runtime (Claude Agent SDK by default, OpenAI-compatible endpoints and ACP agents supported)",
   "license": "Apache-2.0",
   "repository": {
