@@ -232,6 +232,22 @@ describe("PiRuntime", () => {
     ).rejects.toThrow(/401 unauthorized/u);
   });
 
+  test("fails fast when apiKeyEnv names a variable that is not set", async () => {
+    await expect(
+      new PiRuntime({
+        baseUrl: "https://api.example.com/v1",
+        model: "m",
+        api: undefined,
+        provider: undefined,
+        apiKeyEnv: "OPEN_SECURITY_DEFINITELY_UNSET_KEY",
+        apiKey: undefined,
+        contextWindow: undefined,
+        maxTokens: undefined,
+        maxTurnsPerPhase: undefined,
+      }).run({ ...RUN }),
+    ).rejects.toThrow(/is not set in the environment/u);
+  });
+
   test("resolves the API key from the configured env var and provider label", async () => {
     fakeSession({ messages: [{ text: "ok", stopReason: "stop" }] });
     process.env["OPEN_SECURITY_TEST_PI_KEY"] = "secret-key";

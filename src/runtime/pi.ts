@@ -90,6 +90,17 @@ export class PiRuntime implements AgentRuntime {
         this.kind,
       );
     }
+    if (
+      this.#config.apiKey === undefined &&
+      this.#config.apiKeyEnv !== undefined &&
+      (process.env[this.#config.apiKeyEnv] ?? "").length === 0
+    ) {
+      throw new AgentRuntimeError(
+        `apiKeyEnv "${this.#config.apiKeyEnv}" is not set in the environment. ` +
+          `Export that variable or pass the key directly (CLI: --api-key <key>; local keyless gateways accept any value).`,
+        this.kind,
+      );
+    }
     // Throwaway config dir: isolates the scan from ~/.pi (settings, skills,
     // auth) and keeps every write outside the repository under review.
     const agentDir = await mkdtemp(join(tmpdir(), "open-security-pi-"));

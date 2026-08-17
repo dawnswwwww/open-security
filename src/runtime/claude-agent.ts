@@ -47,6 +47,16 @@ export class ClaudeAgentRuntime implements AgentRuntime {
   }
 
   public async run(request: AgentRunRequest): Promise<AgentRunResult> {
+    if (
+      this.#config.apiKey === undefined &&
+      this.#config.apiKeyEnv !== undefined &&
+      (process.env[this.#config.apiKeyEnv] ?? "").length === 0
+    ) {
+      throw new AgentRuntimeError(
+        `--api-key-env: environment variable ${this.#config.apiKeyEnv} is not set.`,
+        this.kind,
+      );
+    }
     const abortController = new AbortController();
     const onAbort = () => abortController.abort(request.signal?.reason);
     if (request.signal?.aborted) {
