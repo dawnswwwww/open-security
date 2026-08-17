@@ -143,6 +143,11 @@ export interface ScanInventory {
   deferredNotReviewed?: string[];
 }
 
+/** True when a path segment names an excluded directory (for tree walks). */
+export function isExcludedSegment(segment: string): boolean {
+  return EXCLUDED_DIRS.has(segment);
+}
+
 export function isReviewablePath(path: string): boolean {
   const segments = path.split("/");
   if (segments.some((segment) => EXCLUDED_DIRS.has(segment))) return false;

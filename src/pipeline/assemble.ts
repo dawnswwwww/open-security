@@ -27,6 +27,8 @@ export interface AssembleInput {
   headRevision?: string;
   workingTree: boolean;
   origin: "diff" | "repository";
+  /** Present for plain-directory (non-Git) repository scans. */
+  snapshotDigest?: string;
   inventory: ScanInventory;
   threatModel: ThreatModel;
   validated: readonly ValidatedCandidate[];
@@ -103,7 +105,9 @@ export function assemble(input: AssembleInput): AssembleResult {
       target: {
         kind:
           input.origin === "repository"
-            ? "git_revision"
+            ? input.snapshotDigest === undefined
+              ? "git_revision"
+              : "directory_snapshot"
             : input.workingTree
               ? "git_worktree"
               : "git_diff",
@@ -116,6 +120,11 @@ export function assemble(input: AssembleInput): AssembleResult {
         ...(input.headRevision === undefined
           ? {}
           : { headRevision: input.headRevision }),
+        ...(input.snapshotDigest === undefined
+          ? {}
+          : {
+              snapshotDigest: `open-security-snapshot/v1:sha256:${input.snapshotDigest}`,
+            }),
       },
       scope: {
         includePaths: input.inventory.files.map((file) => file.path),
@@ -166,7 +175,12 @@ export function assemble(input: AssembleInput): AssembleResult {
           ? "working_tree"
           : "diff",
     completeness,
-    inventoryStrategy: input.origin,
+    inventoryStrategy:
+      input.origin === "repository"
+        ? input.snapshotDigest === undefined
+          ? "repository"
+          : "directory"
+        : "diff",
     includePaths: input.inventory.files.map((file) => file.path),
     excludePaths: input.inventory.excluded,
     surfaces,

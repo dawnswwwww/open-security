@@ -40,9 +40,10 @@ Two scan modes: **diff scan** (review a change set, the CI gate) and
 **repository scan** (ranked whole-repo review — omit `--base`).
 
 ```bash
-# Repository-wide scan: files are ranked by security relevance (auth,
-# crypto, SQL, parsers, ...), top 150 deep-reviewed in batches, the rest
-# honestly reported as deferred coverage.
+# Repository-wide scan: works on Git repositories AND plain directories.
+# Files are ranked by security relevance (auth, crypto, SQL, parsers, ...),
+# top 150 deep-reviewed in batches, the rest honestly reported as deferred.
+# Non-Git targets get a directory_snapshot identity (content digest).
 open-security scan . --max-files 150
 
 # Diff scan:

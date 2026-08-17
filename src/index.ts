@@ -37,6 +37,10 @@ import { assemble } from "./pipeline/assemble.js";
 import { resolveSecurityMd } from "./pipeline/security-md.js";
 import { toSarif } from "./contract/sarif.js";
 import { newScanId } from "./contract/identity.js";
+import {
+  directoryTargetId,
+  scanDirectory,
+} from "./directory.js";
 import { VERSION } from "./version.js";
 import type { ScanProgressCallback } from "./progress.js";
 
@@ -91,7 +95,12 @@ export class OpenSecurity {
     options: ScanOptions,
     onProgress?: ScanProgressCallback,
   ): Promise<ScanResult> {
-    const repository = await resolveGitRoot(repositoryInput);
+    const repository = await resolveGitRoot(repositoryInput).catch(() => {
+      throw new Error(
+        `Diff scans require a Git repository and ${repositoryInput} is not one. ` +
+          "Omit --base to scan a plain directory instead.",
+      );
+    });
     const spec: DiffSpec = {
       base: options.base,
       head: options.head,
@@ -135,19 +144,38 @@ export class OpenSecurity {
     options: RepositoryScanOptions,
     onProgress?: ScanProgressCallback,
   ): Promise<ScanResult> {
-    const repository = await resolveGitRoot(repositoryInput);
-    const headSha = await resolveRevision(repository, options.head ?? "HEAD");
+    let repository: string;
+    let tracked: string[];
+    let revisionKey: string;
+    let targetId: string;
+    let snapshotDigest: string | undefined;
+    let headSha: string | undefined;
+    const isGit = await resolveGitRoot(repositoryInput)
+      .then(() => true)
+      .catch(() => false);
+    if (isGit) {
+      repository = await resolveGitRoot(repositoryInput);
+      headSha = await resolveRevision(repository, options.head ?? "HEAD");
+      tracked = await listRepositoryFiles(repository);
+      revisionKey = headSha;
+      targetId = repositoryTargetId(headSha);
+    } else {
+      const snapshot = await scanDirectory(repositoryInput);
+      repository = snapshot.root;
+      tracked = snapshot.allPaths;
+      revisionKey = snapshot.digest;
+      targetId = directoryTargetId(snapshot.digest);
+      snapshotDigest = snapshot.digest;
+    }
     const scanId = newScanId();
     const outputDir =
       options.outputDir === undefined
         ? join(repository, "..", ".open-security", scanId)
         : options.outputDir;
-    const tracked = await listRepositoryFiles(repository);
     const inventory = buildRepositoryInventory(
       tracked,
       options.maxFiles ?? 150,
     );
-    const targetId = repositoryTargetId(headSha);
     return await this.#executeScan({
       repository,
       scanId,
@@ -155,13 +183,14 @@ export class OpenSecurity {
       inventory,
       targetId,
       origin: "repository",
-      headSha,
+      ...(headSha === undefined ? {} : { headSha }),
+      ...(snapshotDigest === undefined ? {} : { snapshotDigest }),
       workingTree: false,
       ...(options.failOnSeverity === undefined
         ? {}
         : { failOnSeverity: options.failOnSeverity }),
       diffSummary:
-        `repository-wide scan at ${headSha.slice(0, 12)}: ` +
+        `repository-wide scan at ${revisionKey.slice(0, 12)}: ` +
         `${inventory.files.length} file(s) selected for deep review` +
         (inventory.deferredNotReviewed === undefined
           ? ""
@@ -179,6 +208,7 @@ export class OpenSecurity {
     origin: "diff" | "repository";
     baseSha?: string;
     headSha?: string;
+    snapshotDigest?: string;
     workingTree: boolean;
     failOnSeverity?: SeverityLevel;
     diffSummary: string;
@@ -282,6 +312,9 @@ export class OpenSecurity {
       ...(input.headSha === undefined ? {} : { headRevision: input.headSha }),
       workingTree: input.workingTree,
       origin: input.origin,
+      ...(input.snapshotDigest === undefined
+        ? {}
+        : { snapshotDigest: input.snapshotDigest }),
       inventory: input.inventory,
       threatModel,
       validated,
@@ -325,6 +358,9 @@ export class OpenSecurity {
           : { deferredNotReviewed: input.inventory.deferredNotReviewed }),
         threatModelSummary: threatModel.summary,
         origin: input.origin,
+        ...(input.snapshotDigest === undefined
+          ? {}
+          : { snapshotDigest: input.snapshotDigest }),
         ...(input.baseSha === undefined
           ? {}
           : { baseRevision: input.baseSha }),
@@ -400,12 +436,15 @@ function renderReport(input: {
   origin: "diff" | "repository";
   baseRevision?: string;
   headRevision?: string;
+  snapshotDigest?: string;
   workingTree: boolean;
 }): string {
   const { findings, completeness } = input;
   const range =
     input.origin === "repository"
-      ? `revision ${(input.headRevision ?? "").slice(0, 12)}`
+      ? input.snapshotDigest === undefined
+        ? `revision ${(input.headRevision ?? "").slice(0, 12)}`
+        : `directory snapshot ${input.snapshotDigest.slice(0, 12)}`
       : input.workingTree
         ? `${(input.baseRevision ?? "").slice(0, 12)}…working-tree`
         : `${(input.baseRevision ?? "").slice(0, 12)}…${(input.headRevision ?? "").slice(0, 12)}`;

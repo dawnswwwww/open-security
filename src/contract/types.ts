@@ -81,12 +81,13 @@ export const manifestSchema = z.object({
     startedAt: z.string().datetime(),
     completedAt: z.string().datetime(),
     target: z.object({
-      kind: z.enum(["git_diff", "git_worktree", "git_revision"]),
+      kind: z.enum(["git_diff", "git_worktree", "git_revision", "directory_snapshot"]),
       targetId: z.string().min(1),
       displayName: z.string().min(1),
       remote: z.string().optional(),
       baseRevision: z.string().optional(),
       headRevision: z.string().optional(),
+      snapshotDigest: z.string().optional(),
     }),
     scope: z.object({
       includePaths: z.array(z.string()),
@@ -128,7 +129,7 @@ export const coverageDocumentSchema = z.object({
   scanId: z.string().min(1),
   mode: z.enum(["diff", "commit", "branch_diff", "working_tree", "repository"]),
   completeness: z.enum(["complete", "partial", "unknown"]),
-  inventoryStrategy: z.enum(["diff", "repository"]),
+  inventoryStrategy: z.enum(["diff", "repository", "directory"]),
   includePaths: z.array(z.string()),
   excludePaths: z.array(z.string()),
   surfaces: z.array(surfaceSchema),
