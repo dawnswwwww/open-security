@@ -9,7 +9,6 @@ import {
   type SeverityLevel,
 } from "./config.js";
 import type { AgentRuntime } from "./runtime/types.js";
-import { ClaudeAgentRuntime } from "./runtime/claude-agent.js";
 import { AcpRuntime } from "./runtime/acp.js";
 import { PiRuntime } from "./runtime/pi.js";
 import {
@@ -44,6 +43,7 @@ import {
 } from "./directory.js";
 import { VERSION } from "./version.js";
 import type { ScanProgressCallback } from "./progress.js";
+import { UsageMeter, type ScanUsage } from "./usage.js";
 
 export type {
   OpenSecurityConfig,
@@ -62,6 +62,12 @@ export type {
   ScanProgressEvent,
   ScanProgressCallback,
 } from "./progress.js";
+export type {
+  ScanPhaseKind,
+  ScanPhaseUsage,
+  ScanUsage,
+  UsageTotals,
+} from "./usage.js";
 
 export interface ScanResult {
   scanId: string;
@@ -69,6 +75,7 @@ export interface ScanResult {
   findingsPath: string;
   manifestPath: string;
   coveragePath: string;
+  usagePath: string;
   sarifPath: string | null;
   reportPath: string;
   findings: number;
@@ -76,6 +83,8 @@ export interface ScanResult {
   maxSeverity: SeverityLevel | null;
   /** true when a reported finding meets the failOnSeverity threshold. */
   failedThreshold: boolean;
+  /** Token/cost/duration accounting for the scan's agent runs. */
+  usage: ScanUsage;
 }
 
 export class OpenSecurity {
@@ -218,6 +227,7 @@ export class OpenSecurity {
     const { onProgress } = input;
     const startedAt = new Date();
     await mkdir(input.outputDir, { recursive: true });
+    const meter = new UsageMeter(this.#runtime);
 
     // ① inventory
     onProgress?.({
@@ -228,8 +238,10 @@ export class OpenSecurity {
 
     // ② threat model (cached per repository + head revision)
     const cacheRevision = input.headSha ?? `worktree-${input.baseSha ?? "none"}`;
+    let threatModelCached = false;
+    const beforeThreatModel = meter.snapshot();
     const threatModel = await loadThreatModel({
-      runtime: this.#runtime,
+      runtime: meter.runtime,
       repository: input.repository,
       cacheKey: threatModelCacheKey(input.repository, cacheRevision),
       cacheDir: join(input.repository, "..", ".open-security", "cache"),
@@ -239,15 +251,24 @@ export class OpenSecurity {
       ...(this.#config.signal === undefined
         ? {}
         : { signal: this.#config.signal }),
-      onCacheStatus: (status) => onProgress?.({ phase: "threat-model", status }),
+      onCacheStatus: (status) => {
+        threatModelCached = status === "cached";
+        onProgress?.({ phase: "threat-model", status });
+      },
     });
+    const threatModelUsage = meter.phaseUsage(
+      beforeThreatModel,
+      "threat-model",
+      threatModelCached,
+    );
     onProgress?.({ phase: "threat-model", status: "done" });
     const securityMd = await resolveSecurityMd(input.repository);
     const threatModelText = JSON.stringify(threatModel, null, 2);
 
     // ③ discovery (batched; the first batch event reports the running state)
+    const beforeDiscovery = meter.snapshot();
     const candidates = await runDiscovery({
-      runtime: this.#runtime,
+      runtime: meter.runtime,
       repository: input.repository,
       inventory: input.inventory,
       threatModel: threatModelText,
@@ -268,6 +289,7 @@ export class OpenSecurity {
           batches,
         }),
     });
+    const discoveryUsage = meter.phaseUsage(beforeDiscovery, "discovery");
     onProgress?.({
       phase: "discovery",
       status: "done",
@@ -283,8 +305,9 @@ export class OpenSecurity {
         total: candidates.length,
       });
     }
+    const beforeValidation = meter.snapshot();
     const validated = await runValidation({
-      runtime: this.#runtime,
+      runtime: meter.runtime,
       repository: input.repository,
       candidates,
       threatModel: threatModelText,
@@ -298,6 +321,7 @@ export class OpenSecurity {
       onProgress: (completed, total) =>
         onProgress?.({ phase: "validation", status: "running", completed, total }),
     });
+    const validationUsage = meter.phaseUsage(beforeValidation, "validation");
     onProgress?.({ phase: "validation", status: "done" });
 
     // ⑤⑥ severity + assemble
@@ -331,7 +355,19 @@ export class OpenSecurity {
     const findingsPath = join(outputDir, "findings.json");
     const manifestPath = join(outputDir, "scan-manifest.json");
     const coveragePath = join(outputDir, "coverage.json");
+    const usagePath = join(outputDir, "usage.json");
     const reportPath = join(outputDir, "report.md");
+    const usage = meter.buildScanUsage({
+      scanId: input.scanId,
+      runtime: this.#runtime.kind,
+      totals: meter.snapshot(),
+      phases: [threatModelUsage, discoveryUsage, validationUsage],
+    });
+    await writeFile(
+      usagePath,
+      `${JSON.stringify(usage, null, 2)}\n`,
+      "utf8",
+    );
     await writeFile(
       findingsPath,
       `${JSON.stringify(assembled.findings, null, 2)}\n`,
@@ -403,11 +439,13 @@ export class OpenSecurity {
       findingsPath,
       manifestPath,
       coveragePath,
+      usagePath,
       sarifPath,
       reportPath,
       findings: reported.length,
       maxSeverity,
       failedThreshold,
+      usage,
     };
     onProgress?.({
       phase: "complete",
@@ -419,9 +457,6 @@ export class OpenSecurity {
 }
 
 function createRuntime(config: RuntimeConfig): AgentRuntime {
-  if (config.runtime === "claude-agent") {
-    return new ClaudeAgentRuntime(config);
-  }
   if (config.runtime === "pi") {
     return new PiRuntime(config);
   }

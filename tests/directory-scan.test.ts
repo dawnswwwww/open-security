@@ -123,7 +123,12 @@ describe("repository scan on a plain (non-Git) directory", () => {
     const outputDir = join(root, "out");
     temporaryDirectories.push(outputDir);
     const scanner = new OpenSecurity({
-      runtime: { runtime: "claude-agent", maxTurnsPerPhase: 5 },
+      runtime: {
+        runtime: "pi",
+        baseUrl: "https://unit.test/v1",
+        model: "test-model",
+        maxTurnsPerPhase: 5,
+      },
       agent: new DirMockRuntime(),
     });
     const result = await scanner.scanRepository(root, { outputDir });

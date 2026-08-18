@@ -6,10 +6,10 @@ mechanical severity calibration — and emits a structured findings contract,
 a human report, and SARIF for CI.
 
 - **CLI + SDK**: `open-security scan` or `new OpenSecurity().scanDiff()`.
-- **Pluggable agent runtime**: default adapter drives the Claude Agent SDK
-  (any Anthropic-protocol endpoint via `--base-url`); the `pi` runtime runs
-  any OpenAI-compatible endpoint, `acp` accepts any ACP agent; inject your own
-  runtime through the SDK for other executors.
+- **Pluggable agent runtime**: the default `pi` runtime embeds the pi agent
+  loop and runs any OpenAI-compatible or Anthropic endpoint (zero-config
+  against `https://api.anthropic.com`); `acp` accepts any ACP agent; inject
+  your own runtime through the SDK for other executors.
 - **Methodology over vibes**: discovery must cite source evidence; validation
   requires counterevidence to reject; severity is calibrated by a mechanical
   matrix in code, not re-argued by the model.
@@ -33,7 +33,9 @@ Adapted from the Codex Security plugin (Apache-2.0, see NOTICE):
 5. **Severity** — impact × likelihood matrix plus hard suppression rules,
    applied mechanically in TypeScript.
 6. **Contract** — `findings.json`, `scan-manifest.json`, `coverage.json`,
-   `report.md`, and SARIF 2.1.0 with stable fingerprints.
+   `report.md`, and SARIF 2.1.0 with stable fingerprints. A `usage.json`
+   artifact and a stderr report close the scan with per-phase token, cost,
+   turn, and duration accounting.
 
 ## CLI
 
@@ -41,13 +43,20 @@ Two scan modes: **diff scan** (review a change set, the CI gate) and
 **repository scan** (ranked whole-repo review — omit `--base`).
 
 ```bash
+# Zero-config diff scan against the Anthropic endpoint
+# (defaults: --runtime pi --base-url https://api.anthropic.com
+#  --api anthropic-messages --model claude-sonnet-4-5
+#  --api-key-env ANTHROPIC_API_KEY):
+export ANTHROPIC_API_KEY=sk-ant-...
+open-security scan . --base origin/main --fail-on-severity high
+
 # Repository-wide scan: works on Git repositories AND plain directories.
 # Files are ranked by security relevance (auth, crypto, SQL, parsers, ...),
 # top 150 deep-reviewed in batches, the rest honestly reported as deferred.
 # Non-Git targets get a directory_snapshot identity (content digest).
 open-security scan . --max-files 150
 
-# Diff scan:
+# Diff scan via any OpenAI-compatible endpoint:
 open-security scan . \
   --base origin/main \
   --base-url https://llm-gateway.internal/v1 \
@@ -59,11 +68,15 @@ open-security scan . \
 
 Notes:
 
-- For the default `claude-agent` runtime, `--base-url` endpoints must speak
-  the Anthropic Messages API. For OpenAI-compatible endpoints use
-  `--runtime pi` instead (see below).
-- The agent runs with read-only tools (`Read`, `Grep`, `Glob`) — the scanner
-  never modifies the repository under review.
+- The agent runs with read-only tools (`read_file`, `glob_files`,
+  `search_files`, `git_show`) — the scanner never modifies the repository
+  under review.
+- After every scan the CLI prints a usage report to stderr (total wall time,
+  agent runs, input/output/cache tokens, plus per-phase breakdown; a cached
+  threat model is marked `cached`), and writes the same numbers to
+  `usage.json` in the output directory. `pi` reports tokens and cache tokens
+  (gateway pricing is unknown to it); `acp` reports only run counts and
+  durations.
 - Exit code 1 when a finding meets `--fail-on-severity`; exit code 2 on
   operational errors. `--json` prints a machine-readable summary.
 
@@ -79,7 +92,7 @@ open-security scan . --base origin/main \
   --runtime acp --acp-command "claude-code-acp"
 ```
 
-### pi runtime (OpenAI-compatible and Anthropic endpoints)
+### pi runtime (default; OpenAI-compatible and Anthropic endpoints)
 
 The `pi` runtime embeds the [pi](https://github.com/earendil-works/pi) agent
 loop in-process and routes it at any OpenAI Chat Completions-compatible
@@ -88,29 +101,34 @@ LiteLLM, or an internal gateway — and equally at Anthropic Messages
 endpoints. One runtime covers both wire protocols:
 
 ```bash
-# OpenAI-compatible endpoint (--runtime pi is inferred from --base-url):
+# Bare invocation: Anthropic defaults apply (anthropic-messages protocol,
+# claude-sonnet-4-5, key from ANTHROPIC_API_KEY):
+export ANTHROPIC_API_KEY=sk-ant-...
+open-security scan . --base origin/main
+
+# OpenAI-compatible endpoint (protocol inferred from --base-url):
 open-security scan . --base origin/main \
   --base-url https://api.deepseek.com/v1 \
   --api-key-env DEEPSEEK_API_KEY \
   --model deepseek-chat
 
-# Anthropic endpoint via pi (--api selects the pi runtime by itself):
+# Anthropic-style gateway with an explicit model:
 open-security scan . --base origin/main \
-  --api anthropic-messages \
-  --base-url https://api.anthropic.com \
-  --api-key-env ANTHROPIC_API_KEY \
+  --base-url https://claude-gateway.internal \
+  --api-key-env GATEWAY_KEY \
   --model claude-sonnet-4-5
 ```
 
 Rule set when flags are omitted:
 
-- Wire protocol (`--api`) defaults to `openai-completions` — it is never
-  guessed from the URL. An explicit `--api` always selects the pi runtime.
-- Runtime: bare invocations (no `--base-url`) and Anthropic-looking base
-  URLs use the default claude-agent runtime; any other `--base-url`
-  auto-selects pi.
-- Pointing pi at an Anthropic-looking URL without `--api` fails fast with a
-  hint instead of sending OpenAI-shaped requests to an Anthropic endpoint.
+- Runtime defaults to `pi` (`acp` requires `--runtime acp`).
+- Bare invocations (no `--base-url`) run against
+  `https://api.anthropic.com` with `--api anthropic-messages`, `--model
+  claude-sonnet-4-5`, and the key from `ANTHROPIC_API_KEY`.
+- Wire protocol (`--api`) is inferred from `--base-url`:
+  Anthropic-looking URLs get `anthropic-messages`, everything else
+  `openai-completions`. An explicit `--api` always wins.
+- `--model` is required whenever `--base-url` is passed explicitly.
 
 Read-only policy is enforced by construction: pi's built-in tools (bash,
 edit, write) are disabled and the only registered tools are open-security's
@@ -158,10 +176,10 @@ import { OpenSecurity } from "@dawnswwwww/open-security";
 
 const scanner = new OpenSecurity({
   runtime: {
-    runtime: "claude-agent",
+    runtime: "pi",
     baseUrl: "https://llm-gateway.internal/v1",
-    apiKeyEnv: "INTERNAL_LLM_KEY",
     model: "my-model",
+    apiKeyEnv: "INTERNAL_LLM_KEY",
   },
 });
 
@@ -177,7 +195,7 @@ injection point:
 
 ```ts
 const scanner = new OpenSecurity({
-  runtime: { runtime: "claude-agent", maxTurnsPerPhase: 400 // optional cap; omit for unlimited },
+  runtime: { runtime: "pi", baseUrl: "https://unit.test/v1", model: "m", maxTurnsPerPhase: 400 }, // config is inert when agent is injected
   agent: myRuntime, // implements AgentRuntime
 });
 ```

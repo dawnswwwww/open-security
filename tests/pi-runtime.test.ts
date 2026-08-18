@@ -133,7 +133,12 @@ describe("PiRuntime", () => {
       maxTurnsPerPhase: undefined,
     }).run({ ...RUN });
     expect(result.text).toBe('{"candidates":[]}');
-    expect(result.usage).toEqual({ inputTokens: 30, outputTokens: 12 });
+    expect(result.usage).toEqual({
+      inputTokens: 30,
+      outputTokens: 12,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+    });
 
     expect(state.sessionOptions?.["noTools"]).toBe("all");
     expect(state.sessionOptions?.["tools"]).toEqual([

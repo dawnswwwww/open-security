@@ -19,7 +19,10 @@ import {
   READ_ONLY_TOOL_NAMES,
   readOnlyToolDefinitions,
 } from "./read-only-tools.js";
-import { REVIEWER_SYSTEM_PROMPT } from "./claude-agent.js";
+import { REVIEWER_SYSTEM_PROMPT } from "./system-prompt.js";
+import type { PiApiKind } from "../config.js";
+
+export type { PiApiKind };
 
 /**
  * pi runtime (https://github.com/earendil-works/pi). Embeds the pi agent loop
@@ -38,8 +41,6 @@ import { REVIEWER_SYSTEM_PROMPT } from "./claude-agent.js";
 
 const DEFAULT_CONTEXT_WINDOW = 128_000;
 const DEFAULT_MAX_TOKENS = 16_384;
-
-export type PiApiKind = "openai-completions" | "anthropic-messages";
 
 export interface PiRuntimeConfig {
   baseUrl: string;
@@ -64,6 +65,8 @@ interface AssistantLikeMessage {
 interface TokenUsageLike {
   input: number;
   output: number;
+  cacheRead?: number;
+  cacheWrite?: number;
 }
 
 export class PiRuntime implements AgentRuntime {
@@ -86,7 +89,7 @@ export class PiRuntime implements AgentRuntime {
       /anthropic|claude/iu.test(this.#config.baseUrl)
     ) {
       throw new AgentRuntimeError(
-        "The default wire protocol is openai-completions, but baseUrl looks like an Anthropic endpoint. Pass api: \"anthropic-messages\" (CLI: --api anthropic-messages), or use the claude-agent runtime.",
+        'The default wire protocol is openai-completions, but baseUrl looks like an Anthropic endpoint. Pass api: "anthropic-messages" (CLI: --api anthropic-messages).',
         this.kind,
       );
     }
@@ -140,6 +143,8 @@ export class PiRuntime implements AgentRuntime {
       let hitTurnLimit = false;
       const inputTokens = { total: 0 };
       const outputTokens = { total: 0 };
+      const cacheReadTokens = { total: 0 };
+      const cacheWriteTokens = { total: 0 };
       const lastAssistant: AssistantLikeMessage[] = [];
       const unsubscribe = session.subscribe((event) => {
         if (event.type === "tool_execution_start") {
@@ -156,6 +161,8 @@ export class PiRuntime implements AgentRuntime {
         if (message.usage !== undefined) {
           inputTokens.total += message.usage.input;
           outputTokens.total += message.usage.output;
+          cacheReadTokens.total += message.usage.cacheRead ?? 0;
+          cacheWriteTokens.total += message.usage.cacheWrite ?? 0;
         }
         lastAssistant[0] = message;
       });
@@ -202,7 +209,14 @@ export class PiRuntime implements AgentRuntime {
           this.kind,
         );
       }
-      usage = { inputTokens: inputTokens.total, outputTokens: outputTokens.total };
+      // Cost stays unreported: the model is registered with zero pricing
+      // (gateway pricing is unknown to pi-ai), so a $0 figure would mislead.
+      usage = {
+        inputTokens: inputTokens.total,
+        outputTokens: outputTokens.total,
+        cacheReadTokens: cacheReadTokens.total,
+        cacheWriteTokens: cacheWriteTokens.total,
+      };
       return usage.inputTokens === 0 && usage.outputTokens === 0
         ? { text }
         : { text, usage };

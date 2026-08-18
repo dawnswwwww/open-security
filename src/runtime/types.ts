@@ -10,6 +10,14 @@
 export interface TokenUsage {
   inputTokens: number;
   outputTokens: number;
+  /** Prompt tokens served from a provider-side cache, when reported. */
+  cacheReadTokens?: number;
+  /** Prompt tokens written into a provider-side cache, when reported. */
+  cacheWriteTokens?: number;
+  /** Runtime-reported cost of the run in USD, when the runtime can price it. */
+  costUSD?: number;
+  /** Agent turns consumed by the run, when the runtime reports them. */
+  turns?: number;
 }
 
 export interface AgentRunRequest {

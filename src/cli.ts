@@ -3,11 +3,19 @@ import { Command } from "commander";
 import { mkdir } from "node:fs/promises";
 import { writeFile } from "node:fs/promises";
 import { OpenSecurity } from "./index.js";
-import { inferRuntimeKind, RUNTIME_KINDS } from "./config.js";
+import {
+  DEFAULT_PI_API_KEY_ENV,
+  DEFAULT_PI_BASE_URL,
+  DEFAULT_PI_MODEL,
+  inferPiApi,
+  RUNTIME_KINDS,
+  type PiApiKind,
+} from "./config.js";
 import type { SeverityLevel, RuntimeConfig } from "./config.js";
 import { loadBenchmarkSuite, runBenchmark } from "./benchmark.js";
 import { VERSION } from "./version.js";
 import type { ScanProgressEvent } from "./progress.js";
+import { renderUsageReport } from "./usage.js";
 
 const START_TIME = Date.now();
 
@@ -58,7 +66,7 @@ interface RuntimeOptions {
   maxTurns?: number | string;
 }
 
-function parsePiApi(value: string): "openai-completions" | "anthropic-messages" {
+function parsePiApi(value: string): PiApiKind {
   if (value === "openai-completions" || value === "anthropic-messages") {
     return value;
   }
@@ -70,38 +78,16 @@ function parsePiApi(value: string): "openai-completions" | "anthropic-messages" 
 function runtimeConfigFrom(options: RuntimeOptions): RuntimeConfig {
   const api =
     options.api === undefined ? undefined : parsePiApi(String(options.api));
-  const runtime =
-    options.runtime ??
-    inferRuntimeKind(
-      options.baseUrl === undefined ? undefined : String(options.baseUrl),
-      api,
-    );
+  const runtime = options.runtime ?? "pi";
   if (api !== undefined && runtime !== "pi") {
     throw new Error("--api applies to the pi runtime only.");
   }
-  const inferred = options.runtime === undefined && runtime === "pi";
   const maxTurns =
     options.maxTurns === undefined ? undefined : Number(options.maxTurns);
   if (maxTurns !== undefined && (!Number.isInteger(maxTurns) || maxTurns <= 0)) {
     throw new Error("--max-turns must be a positive integer.");
   }
   const turnLimit = maxTurns === undefined ? {} : { maxTurnsPerPhase: maxTurns };
-  if (runtime === "claude-agent") {
-    return {
-      runtime: "claude-agent",
-      ...(options.baseUrl === undefined
-        ? {}
-        : { baseUrl: String(options.baseUrl) }),
-      ...(options.apiKeyEnv === undefined
-        ? {}
-        : { apiKeyEnv: String(options.apiKeyEnv) }),
-      ...(options.apiKey === undefined
-        ? {}
-        : { apiKey: String(options.apiKey) }),
-      ...(options.model === undefined ? {} : { model: String(options.model) }),
-      ...turnLimit,
-    };
-  }
   if (runtime === "acp") {
     if (options.acpCommand === undefined) {
       throw new Error("--acp-command is required with --runtime acp.");
@@ -114,29 +100,32 @@ function runtimeConfigFrom(options: RuntimeOptions): RuntimeConfig {
     };
   }
   if (runtime === "pi") {
-    if (options.baseUrl === undefined) {
+    const defaultEndpoint = options.baseUrl === undefined;
+    if (options.model === undefined && !defaultEndpoint) {
       throw new Error(
-        "--base-url is required with --runtime pi (e.g. https://api.openai.com/v1 or https://api.anthropic.com).",
+        `--model is required with an explicit --base-url; it only defaults to ${DEFAULT_PI_MODEL} on the default ${DEFAULT_PI_BASE_URL} endpoint.`,
       );
     }
-    if (options.model === undefined) {
-      throw new Error(
-        `--model is required with --runtime pi${
-          inferred ? " (auto-selected from --base-url)" : ""
-        }.`,
-      );
-    }
+    const baseUrl = defaultEndpoint ? DEFAULT_PI_BASE_URL : String(options.baseUrl);
+    // The default key env belongs to the default endpoint only, so explicit
+    // OpenAI-style endpoints are never pointed at ANTHROPIC_API_KEY.
+    const apiKeyEnv =
+      options.apiKeyEnv !== undefined
+        ? String(options.apiKeyEnv)
+        : defaultEndpoint && options.apiKey === undefined
+          ? DEFAULT_PI_API_KEY_ENV
+          : undefined;
     return {
       runtime: "pi",
-      baseUrl: String(options.baseUrl),
-      model: String(options.model),
-      ...(api === undefined ? {} : { api }),
+      baseUrl,
+      model: options.model === undefined
+        ? DEFAULT_PI_MODEL
+        : String(options.model),
+      api: inferPiApi(baseUrl, api),
       ...(options.provider === undefined
         ? {}
         : { provider: String(options.provider) }),
-      ...(options.apiKeyEnv === undefined
-        ? {}
-        : { apiKeyEnv: String(options.apiKeyEnv) }),
+      ...(apiKeyEnv === undefined ? {} : { apiKeyEnv }),
       ...(options.apiKey === undefined
         ? {}
         : { apiKey: String(options.apiKey) }),
@@ -152,24 +141,30 @@ function addRuntimeOptions(command: Command): Command {
   return command
     .option(
       "--runtime <kind>",
-      `Agent runtime: ${RUNTIME_KINDS.join(" | ")} (default: inferred from --base-url; claude-agent when unset)`,
+      `Agent runtime: ${RUNTIME_KINDS.join(" | ")} (default: pi)`,
     )
     .option(
       "--base-url <url>",
-      "Model API root: Anthropic protocol (claude-agent) or OpenAI-compatible (pi)",
+      `Model API root (default: ${DEFAULT_PI_BASE_URL}); OpenAI-compatible endpoints use the openai wire protocol`,
     )
     .option(
       "--api <protocol>",
-      "Wire protocol for the pi runtime: openai-completions | anthropic-messages (default: openai-completions)",
+      "Wire protocol for the pi runtime: openai-completions | anthropic-messages (default: inferred from --base-url)",
     )
     .option(
       "--provider <name>",
       "pi runtime provider label for credential resolution (default: inferred)",
     )
     .option("--acp-command <command>", "ACP agent command line (acp runtime)")
-    .option("--api-key-env <name>", "Environment variable holding the API key")
+    .option(
+      "--api-key-env <name>",
+      `Environment variable holding the API key (default: ${DEFAULT_PI_API_KEY_ENV} on the default endpoint)`,
+    )
     .option("--api-key <key>", "API key (prefer --api-key-env)")
-    .option("--model <id>", "Model id passed to the runtime")
+    .option(
+      "--model <id>",
+      `Model id passed to the runtime (default: ${DEFAULT_PI_MODEL} on the default endpoint)`,
+    )
     .option(
       "--max-turns <n>",
       "Max agent turns per phase",
@@ -260,6 +255,9 @@ addRuntimeOptions(
         .join("\n"),
     );
   }
+  process.stderr.write(
+    `${renderUsageReport(result.usage, Date.now() - START_TIME).join("\n")}\n`,
+  );
   if (result.failedThreshold) {
     process.exitCode = 1;
   }

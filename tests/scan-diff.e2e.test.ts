@@ -145,7 +145,9 @@ describe("diff scan end to end (mock runtime)", () => {
     temporaryDirectories.push(outputDir);
     const scanner = new OpenSecurity({
       runtime: {
-        runtime: "claude-agent",
+        runtime: "pi",
+        baseUrl: "https://unit.test/v1",
+        model: "test-model",
         maxTurnsPerPhase: 5,
       },
       agent: new MockRuntime(),
@@ -209,6 +211,21 @@ describe("diff scan end to end (mock runtime)", () => {
     const sarif = JSON.parse(await readFile(result.sarifPath!, "utf8"));
     expect(sarif.version).toBe("2.1.0");
     expect(sarif.runs[0].results).toHaveLength(1);
+
+    // Usage accounting: one metered run per phase; the mock reports no
+    // token usage, so the report must say so rather than invent zeros.
+    expect(result.usage.runtime).toBe("mock");
+    expect(result.usage.tokensReported).toBe(false);
+    expect(result.usage.totals.runs).toBe(3);
+    expect(result.usage.phases.map((phase) => phase.phase)).toEqual([
+      "threat-model",
+      "discovery",
+      "validation",
+    ]);
+    expect(result.usage.phases[0]?.cached).toBeUndefined();
+    const usage = JSON.parse(await readFile(result.usagePath, "utf8"));
+    expect(usage.documentType).toBe("open-security.usage");
+    expect(usage.scanId).toBe(result.scanId);
   });
 
   test("reuses the cached threat model across scans of the same revision", async () => {
@@ -218,7 +235,12 @@ describe("diff scan end to end (mock runtime)", () => {
     const outputB = join(repository, "..", `cache-b-${Date.now()}`);
     temporaryDirectories.push(outputA, outputB);
     const scanner = new OpenSecurity({
-      runtime: { runtime: "claude-agent", maxTurnsPerPhase: 5 },
+      runtime: {
+        runtime: "pi",
+        baseUrl: "https://unit.test/v1",
+        model: "test-model",
+        maxTurnsPerPhase: 5,
+      },
       agent: runtime,
     });
     await scanner.scanDiff(repository, {
@@ -228,13 +250,19 @@ describe("diff scan end to end (mock runtime)", () => {
       outputDir: outputA,
     });
     expect(runtime.threatModelCalls).toBe(1);
-    await scanner.scanDiff(repository, {
+    const second = await scanner.scanDiff(repository, {
       base: "HEAD~1",
       head: "HEAD",
       workingTree: false,
       outputDir: outputB,
     });
     expect(runtime.threatModelCalls).toBe(1);
+    // The cached threat-model phase makes no model call and is marked as such.
+    expect(second.usage.phases[0]).toMatchObject({
+      phase: "threat-model",
+      cached: true,
+      runs: 0,
+    });
   });
 
   test("fail-on-severity gates the exit decision", async () => {
@@ -242,7 +270,12 @@ describe("diff scan end to end (mock runtime)", () => {
     const outputDir = join(repository, "..", `gate-${Date.now()}`);
     temporaryDirectories.push(outputDir);
     const scanner = new OpenSecurity({
-      runtime: { runtime: "claude-agent", maxTurnsPerPhase: 5 },
+      runtime: {
+        runtime: "pi",
+        baseUrl: "https://unit.test/v1",
+        model: "test-model",
+        maxTurnsPerPhase: 5,
+      },
       agent: new MockRuntime(),
     });
     const result = await scanner.scanDiff(repository, {

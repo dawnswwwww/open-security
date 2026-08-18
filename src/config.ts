@@ -1,29 +1,37 @@
 import { z } from "zod";
 
 /**
- * Runtime selection. `claude-agent` drives the Claude Agent SDK (Anthropic
- * Messages protocol; custom endpoints via baseUrl). `acp` launches any
- * ACP-compatible agent process and lets it own model routing. `pi` embeds
- * the pi agent loop (https://github.com/earendil-works/pi) and routes it at
- * any OpenAI Chat Completions-compatible endpoint.
+ * Runtime selection. `pi` (the default) embeds the pi agent loop
+ * (https://github.com/earendil-works/pi) and routes it at any OpenAI Chat
+ * Completions-compatible or Anthropic Messages endpoint. `acp` launches any
+ * ACP-compatible agent process and lets it own model routing.
  */
-export const RUNTIME_KINDS = ["claude-agent", "acp", "pi"] as const;
+export const RUNTIME_KINDS = ["pi", "acp"] as const;
 export type RuntimeKind = (typeof RUNTIME_KINDS)[number];
 
+/** Wire protocols the pi runtime speaks. */
+export type PiApiKind = "openai-completions" | "anthropic-messages";
+
 /**
- * Default runtime when `--runtime` is omitted. An explicit protocol (`--api`)
- * always selects pi. Bare invocations keep the zero-config claude-agent
- * path; a `--base-url` that clearly is not an Anthropic endpoint cannot work
- * under claude-agent anyway, so pi is auto-selected for it
- * (OpenAI-compatible endpoints).
+ * Bare-invocation defaults: pi against the Anthropic Messages API, so
+ * `export ANTHROPIC_API_KEY` is all the setup a default scan needs.
  */
-export function inferRuntimeKind(
+export const DEFAULT_PI_BASE_URL = "https://api.anthropic.com";
+export const DEFAULT_PI_MODEL = "claude-sonnet-4-5";
+export const DEFAULT_PI_API_KEY_ENV = "ANTHROPIC_API_KEY";
+
+/**
+ * Wire protocol for the pi runtime. An explicit protocol always wins;
+ * otherwise Anthropic-looking base URLs (including the default endpoint)
+ * get anthropic-messages, everything else openai-completions.
+ */
+export function inferPiApi(
   baseUrl: string | undefined,
-  api?: string,
-): RuntimeKind {
-  if (api !== undefined) return "pi";
-  if (baseUrl === undefined) return "claude-agent";
-  return /anthropic|claude/iu.test(baseUrl) ? "claude-agent" : "pi";
+  api?: PiApiKind,
+): PiApiKind {
+  if (api !== undefined) return api;
+  const url = baseUrl ?? DEFAULT_PI_BASE_URL;
+  return /anthropic|claude/iu.test(url) ? "anthropic-messages" : "openai-completions";
 }
 
 export const SeverityLevels = [
@@ -44,19 +52,6 @@ export const SEVERITY_RANK: Record<SeverityLevel, number> = {
 
 const runtimeConfigSchema = z.discriminatedUnion("runtime", [
   z.object({
-    runtime: z.literal("claude-agent"),
-    /**
-     * Anthropic-protocol base URL (for example an internal gateway that
-     * exposes the Anthropic Messages API). Omit to use the runtime default.
-     */
-    baseUrl: z.string().url().optional(),
-    /** Environment variable holding the API key (preferred over apiKey). */
-    apiKeyEnv: z.string().min(1).optional(),
-    apiKey: z.string().min(1).optional(),
-    model: z.string().min(1).optional(),
-    maxTurnsPerPhase: z.number().int().positive().optional(),
-  }),
-  z.object({
     runtime: z.literal("acp"),
     /** Command line that launches the ACP agent, e.g. "claude-code-acp". */
     acpCommand: z.string().min(1),
@@ -70,8 +65,9 @@ const runtimeConfigSchema = z.discriminatedUnion("runtime", [
     /** Model id the endpoint serves. */
     model: z.string().min(1),
     /**
-     * Wire protocol. Defaults to openai-completions; pass
-     * "anthropic-messages" explicitly for Anthropic-protocol endpoints.
+     * Wire protocol. Defaults to openai-completions; the CLI infers
+     * anthropic-messages from Anthropic-looking base URLs, and pi runtime
+     * SDK callers must pass it explicitly for Anthropic-protocol endpoints.
      */
     api: z.enum(["openai-completions", "anthropic-messages"]).optional(),
     /** Provider label pi-ai resolves credentials under (default per api). */

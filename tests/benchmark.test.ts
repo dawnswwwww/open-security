@@ -225,7 +225,12 @@ describe("runBenchmark end to end (mock runtime)", () => {
 
     const outputRoot = join(root, "benchmark-out");
     const scanner = new OpenSecurity({
-      runtime: { runtime: "claude-agent", maxTurnsPerPhase: 5 },
+      runtime: {
+        runtime: "pi",
+        baseUrl: "https://unit.test/v1",
+        model: "test-model",
+        maxTurnsPerPhase: 5,
+      },
       agent: new BenchmarkMockRuntime(),
     });
     const report = await runBenchmark({
